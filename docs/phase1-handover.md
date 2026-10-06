@@ -518,8 +518,96 @@ The following source characteristics remain important even though they were appr
 - caregiver activity/training child linkage remains null where source Child ID is NA;
 - legacy hidden attendance is not merged into current attendance;
 - `child_status_raw` preserves the questionable Caregivers source field without reinterpreting it.
+- 40 Caregiver Outcome Assessment dates are intrinsically ambiguous under the mixed source date formats; see the dedicated limitation below.
 
 These should be revisited only if Phase 2 reporting or business workflows require canonical semantics.
+
+
+### Caregiver Outcome Assessment — mixed date formats
+
+The source `Caregiver Outcome Assessment` sheet contains mixed slash-separated date formats in `Date of Assessment`.
+
+During migration, the existing parsing heuristic was:
+- if the first slash-separated component is greater than 12, interpret the source as `DD/MM/YYYY`;
+- otherwise, interpret the source as `MM/DD/YYYY`.
+
+This rule allowed clearly distinguishable dates to be parsed consistently, but **40 populated source dates are intrinsically ambiguous** because both the first and second slash-separated components are between 1 and 12. For those records, the source text alone does not establish whether the intended format was day/month or month/day.
+
+No database values are being changed as part of this handover clarification. The 40 records remain a documented Phase 1 limitation and should be reviewed/validated by the Project Manager or Tamahar data owner before date-sensitive reporting or downstream workflows rely on them. The risk is that an ambiguous value may have been stored with day and month reversed relative to the source author's intent.
+
+The exact 40 records can be identified from the existing migration lineage in `private.source_records` using the preserved raw source row and source row number:
+
+```sql
+select
+  source_row_number,
+  source_record_key,
+  raw_row->>'Caregiver Outcome Id' as caregiver_outcome_id,
+  raw_row->>'Child Id' as child_id,
+  raw_row->>'Caregiver ID' as caregiver_id,
+  raw_row->>'Date of Assessment' as source_date
+from private.source_records
+where source_sheet = 'Caregiver Outcome Assessment'
+  and nullif(raw_row->>'Date of Assessment', '') is not null
+  and split_part(raw_row->>'Date of Assessment','/',1) ~ '^[0-9]+
+
+The following chain was compared:
+
+source analysis → approved source model → ERD → SQL migrations → Supabase schema → migrated data → handover.
+
+Result:
+- model tables match the implemented 18-table database;
+- migration filenames now match Supabase migration history;
+- source-lineage fields are implemented and populated;
+- source-to-target counts reconcile to successful rows plus logged failures/exclusions;
+- tested FK relationships contain no orphans;
+- the two known transactional failures are explicitly logged;
+- anomalous caregiver and legacy-source blocks are explicitly logged rather than hidden;
+- no unresolved schema discrepancy remains at Phase 1 handover.
+
+## 16. PM / Phase 2 readiness notes
+
+The Phase 1 database is populated and traceable, but Phase 2 should not assume client access is enabled. The public tables currently have RLS enabled with no client policies. Frontend authorization, API exposure, and UX decisions belong to the next phase.
+
+Before frontend work starts, the PM/team should read:
+1. `docs/phase1-data-model.md`
+2. `docs/phase1-source-mapping.md`
+3. `docs/phase1-migration-failures.md`
+4. this handover
+5. the two SQL migration files
+
+  and split_part(raw_row->>'Date of Assessment','/',2) ~ '^[0-9]+
+
+The following chain was compared:
+
+source analysis → approved source model → ERD → SQL migrations → Supabase schema → migrated data → handover.
+
+Result:
+- model tables match the implemented 18-table database;
+- migration filenames now match Supabase migration history;
+- source-lineage fields are implemented and populated;
+- source-to-target counts reconcile to successful rows plus logged failures/exclusions;
+- tested FK relationships contain no orphans;
+- the two known transactional failures are explicitly logged;
+- anomalous caregiver and legacy-source blocks are explicitly logged rather than hidden;
+- no unresolved schema discrepancy remains at Phase 1 handover.
+
+## 16. PM / Phase 2 readiness notes
+
+The Phase 1 database is populated and traceable, but Phase 2 should not assume client access is enabled. The public tables currently have RLS enabled with no client policies. Frontend authorization, API exposure, and UX decisions belong to the next phase.
+
+Before frontend work starts, the PM/team should read:
+1. `docs/phase1-data-model.md`
+2. `docs/phase1-source-mapping.md`
+3. `docs/phase1-migration-failures.md`
+4. this handover
+5. the two SQL migration files
+
+  and split_part(raw_row->>'Date of Assessment','/',1)::int between 1 and 12
+  and split_part(raw_row->>'Date of Assessment','/',2)::int between 1 and 12
+order by source_row_number;
+```
+
+This query operates only on the existing migration/audit artifacts and does not alter migrated data.
 
 ## 15. Final consistency check
 
