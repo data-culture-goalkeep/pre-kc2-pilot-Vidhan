@@ -1,0 +1,3 @@
+-- Phase 1 seed file
+-- No fabricated business seed data is included.
+-- Sanitized source data is loaded through the controlled migration workflow.
