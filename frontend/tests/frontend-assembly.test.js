@@ -13,8 +13,8 @@ const backend = html.indexOf('src="backend.js"');
 const app = html.indexOf('src="app.js"');
 
 assert.ok(config >= 0 && runtime > config, 'runtime config must load after safe defaults');
-assert.ok(auth > runtime, 'optional session helper must load after runtime config');
-assert.ok(backend > auth, 'backend must load after optional session helper');
+assert.ok(auth > runtime, 'auth client must load after runtime config');
+assert.ok(backend > auth, 'backend must load after auth client');
 assert.ok(app > backend, 'app must load after backend');
 assert.equal(html.includes('demo.js'), false, 'demo module must not be loaded');
 assert.equal(html.includes('Open DEMO workspace'), false, 'demo entry point must not exist');
