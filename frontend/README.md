@@ -56,6 +56,29 @@ Without `runtime-config.js`, the UI loads safely and reports that backend client
 
 For a future approved authentication flow, `backend.js` reads the access token only from a runtime provider function `window.TamaharAuth.getAccessToken()`. No user access token should be written into `config.js` or `runtime-config.js`.
 
+## Password recovery
+
+The browser auth client supports password sign-in, session refresh, logout, password-recovery emails, recovery callbacks, and authenticated password updates.
+
+Recovery behavior:
+
+- **Forgot password** starts a PKCE recovery request and stores the verifier only in the initiating browser.
+- Recovery callbacks are processed before normal workspace bootstrap.
+- Valid callbacks open **Set new password**.
+- Invalid or expired callbacks (including `otp_expired`) show a dedicated recovery error instead of silently falling back to Staff Sign In.
+- Password changes are sent to Supabase Auth using the authenticated recovery session.
+- The app never automatically resends recovery email requests, which avoids compounding Supabase email rate limits.
+
+Supabase Auth URL Configuration must allow the deployed redirect URL. For this Vercel project:
+
+- set the production **Site URL** to the intended stable production application URL;
+- add the stable Phase 2 branch alias when using it for recovery:
+  `https://pre-kc2-pilot-vidhan-git-phase2-frontend-polish-kc-3.vercel.app/**`
+- for Vercel Preview deployments, Supabase supports a wildcard allow-list entry:
+  `https://*-kc-3.vercel.app/**`
+
+Use an exact production redirect rather than a broad wildcard for the production Site URL.
+
 ## Current integration scope
 
 Connected to existing Phase 1 tables:
