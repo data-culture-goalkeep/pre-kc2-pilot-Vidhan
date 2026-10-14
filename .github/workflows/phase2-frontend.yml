@@ -21,7 +21,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run backend adapter tests
         run: node frontend/tests/backend-adapter.test.js
-      - name: Verify runtime config build
+      - name: Test runtime config generation
+        run: python3 frontend/tests/runtime-config.test.py
+      - name: Verify Vercel build command with valid public config
         env:
           SUPABASE_URL: https://example.supabase.co
           SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_test
