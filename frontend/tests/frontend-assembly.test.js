@@ -10,13 +10,13 @@ const config = html.indexOf('src="config.js"');
 const runtime = html.indexOf('src="runtime-config.js"');
 const auth = html.indexOf('src="auth.js"');
 const backend = html.indexOf('src="backend.js"');
-const demo = html.indexOf('src="demo.js"');
 const app = html.indexOf('src="app.js"');
 
 assert.ok(config >= 0 && runtime > config, 'runtime config must load after safe defaults');
-assert.ok(auth > runtime, 'auth must load after runtime config');
-assert.ok(backend > auth, 'backend must load after auth');
-assert.ok(demo > backend, 'demo module must load after backend');
-assert.ok(app > demo, 'app must load last');
+assert.ok(auth > runtime, 'optional session helper must load after runtime config');
+assert.ok(backend > auth, 'backend must load after optional session helper');
+assert.ok(app > backend, 'app must load after backend');
+assert.equal(html.includes('demo.js'), false, 'demo module must not be loaded');
+assert.equal(html.includes('Open DEMO workspace'), false, 'demo entry point must not exist');
 
 console.log('frontend assembly tests passed');
