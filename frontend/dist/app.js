@@ -23,8 +23,7 @@
     selectedId: null,
     entryDate: null,
     holidays: {},
-    availableMonths: [],
-    dataMode: 'live'
+    availableMonths: []
   };
 
   function programmeName(index) {
@@ -74,28 +73,22 @@
     renderNav();
     $('view').innerHTML = `<section class="card card-pad"><h2 class="section-title">${esc(text)}</h2><p class="muted">Please wait.</p></section>`;
   }
-  function showLogin(message = '') {
-    $('nav').innerHTML = '';
-    $('crumb').textContent = 'Staff sign in';
-    setStatus('Authentication required');
-    $('view').innerHTML = `<section class="card card-pad auth-card"><div class="eyebrow">Tamahar staff live access</div><h1 class="title">Sign in for live Supabase data</h1><p class="intro">The pilot opens in DEMO mode by default. Use an approved Tamahar staff account only when live data access has been provisioned.</p>${message ? `<div class="callout auth-error">${esc(message)}</div>` : ''}<form class="auth-form" onsubmit="TamaharUI.signIn(event)"><label>Email<input id="auth-email" type="email" autocomplete="username" required></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required></label><div class="auth-actions"><button class="btn" type="submit">Sign in to live data</button><button class="btn ghost" type="button" onclick="TamaharUI.enterDemo()">Return to DEMO</button></div></form></section>`;
-  }
   function showError(error) {
-    if (error?.status === 401) {
-      showLogin('Your session is missing or expired. Sign in again.');
-      return;
-    }
-    setStatus(error?.status === 403 ? 'Access denied' : 'Backend access pending');
-    const detail = error?.status === 403
-      ? 'Your account is signed in but is not permitted to read this workspace data. Contact the Tamahar administrator responsible for staff access.'
-      : 'The Phase 1 Supabase integration is available, but this request could not be completed safely.';
-    $('view').innerHTML = `<section class="card card-pad error-state"><div class="eyebrow">${error?.status === 403 ? 'Access denied' : 'Connection unavailable'}</div><h1 class="title">Programme Workspace unavailable</h1><p class="intro">${esc(error?.message || error)}</p><div class="callout">${esc(detail)}</div><div class="state-actions"><button class="btn" onclick="TamaharUI.retry()">Retry connection</button>${window.TamaharAuth?.getSession?.() ? '<button class="btn ghost" onclick="TamaharUI.signOut()">Sign out</button>' : ''}</div></section>`;
+    const isAuth = error?.status === 401;
+    const isDenied = error?.status === 403;
+    setStatus(isAuth ? 'Authentication required' : isDenied ? 'Access denied' : 'Backend access pending');
+    const title = isAuth ? 'Authentication is required for real programme data'
+      : isDenied ? 'Your current access is not permitted'
+      : 'Programme Workspace unavailable';
+    const detail = isAuth
+      ? 'This dashboard opened directly as requested, but the existing Supabase security model only allows authenticated staff sessions to read child data. No login screen or demo fallback is being substituted.'
+      : isDenied
+        ? 'The request reached Supabase, but the existing Data API grants or RLS scope do not permit these records.'
+        : 'The Phase 1 Supabase integration is configured, but this request could not be completed.';
+    $('view').innerHTML = `<section class="card card-pad error-state"><div class="eyebrow">${isAuth ? 'Real data protected' : isDenied ? 'Access denied' : 'Connection unavailable'}</div><h1 class="title">${esc(title)}</h1><p class="intro">${esc(error?.message || error)}</p><div class="callout">${esc(detail)}</div><div class="state-actions"><button class="btn" onclick="TamaharUI.retry()">Retry connection</button>${window.TamaharAuth?.getSession?.() ? '<button class="btn ghost" onclick="TamaharUI.signOut()">Clear saved session</button>' : ''}</div></section>`;
   }
   function backendBanner() {
-    if (state.dataMode === 'demo') {
-      return `<div class="callout" style="margin-bottom:18px"><strong>DEMO MODE · synthetic data only.</strong><span class="demo-badge">DEMO</span> No displayed child, attendance, therapy or assessment record is real. Nothing in this mode is read from or written to Supabase.</div>`;
-    }
-    return `<div class="callout" style="margin-bottom:18px"><strong>Phase 2 · authenticated read-only integration.</strong> Real Phase 1 records are shown only when the signed-in user's existing RLS scope permits them. Write actions remain disabled.</div>`;
+    return `<div class="callout" style="margin-bottom:18px"><strong>Phase 2 · read-only Supabase integration.</strong> The original Programme Workspace is connected only to the existing Phase 1 backend. Real records appear when the current Supabase access context is authorized; no demo data is used.</div>`;
   }
   function filters() {
     return `<div class="filters"><label class="field-inline">Month <input type="month" value="${esc(state.month)}" onchange="TamaharUI.setMonth(this.value)"></label><label class="field-inline">Programme <select onchange="TamaharUI.setProgramme(this.value)"><option value="all">All programmes</option>${PROGRAMMES.map((name,i)=>`<option value="${i}" ${String(state.programmeFilter)===String(i)?'selected':''}>${esc(name)}</option>`).join('')}</select></label><label class="field-inline search-field">Search <input type="search" placeholder="Child, ID, centre…" value="${esc(state.search)}" oninput="TamaharUI.setSearch(this.value)"></label></div>`;
@@ -109,7 +102,7 @@
       ['programmes','General info'],
       ['progress','Child progress']
     ];
-    $('nav').innerHTML = items.map(([key,label]) => `<button class="${state.page===key || (state.page==='child' && key==='children') ? 'active':''}" onclick="TamaharUI.go('${key}')">${label}</button>`).join('') + (state.dataMode === 'demo' ? '<button onclick="TamaharUI.showLiveLogin()">Live staff sign in</button>' : '<button onclick="TamaharUI.signOut()">Sign out</button>');
+    $('nav').innerHTML = items.map(([key,label]) => `<button class="${state.page===key || (state.page==='child' && key==='children') ? 'active':''}" onclick="TamaharUI.go('${key}')">${label}</button>`).join('') + (window.TamaharAuth?.getSession?.() ? '<button onclick="TamaharUI.signOut()">Clear saved session</button>' : '');
     $('crumb').textContent = items.find(([key]) => key === state.page)?.[1] || (state.page === 'child' ? 'Child record' : 'Programme workspace');
   }
 
@@ -218,16 +211,13 @@
   }
 
   async function loadMonth(month) {
-    showLoading(state.dataMode === 'demo' ? `Loading ${month} DEMO data…` : `Loading ${month} from Supabase…`);
+    showLoading(`Loading ${month} from Supabase…`);
     try {
-      const source = state.dataMode === 'demo' ? window.TamaharDemo : window.TamaharBackend;
-      const result = await source.loadMonth(state.children, month);
+      const result = await window.TamaharBackend.loadMonth(state.children, month);
       state.month = month;
       state.entryDate = `${month}-01`;
       state.holidays = result.holidays || {};
-      setStatus(state.dataMode === 'demo'
-        ? `DEMO · ${state.children.length} synthetic records · read-only`
-        : `Connected · ${state.children.length} Phase 1 child records · read-only`);
+      setStatus(`Connected · ${state.children.length} Phase 1 child records · read-only`);
       render();
     } catch (error) {
       console.error(error);
@@ -241,78 +231,23 @@
     setChildTab(tab) { state.childTab = tab; render(); },
     setProgramme(value) { state.programmeFilter = value; render(); },
     setSearch(value) { state.search = value; render(); },
-    retry() { state.dataMode === 'demo' ? enterDemo() : bootstrap(); },
-    async signIn(event) {
-      event?.preventDefault?.();
-      const email = $('auth-email')?.value || '';
-      const password = $('auth-password')?.value || '';
-      showLoading('Signing in…');
-      try {
-        await window.TamaharAuth.signIn(email, password);
-        state.dataMode = 'live';
-        await bootstrap();
-      } catch (error) {
-        console.error(error);
-        showLogin(error?.message || 'Sign-in failed.');
-      }
-    },
+    retry() { bootstrap(); },
     async signOut() {
-      showLoading('Signing out…');
+      showLoading('Clearing saved session…');
       await window.TamaharAuth?.signOut?.();
       state.children = [];
       state.availableMonths = [];
       state.selectedId = null;
-      showLogin();
-    },
-    async enterDemo() { await enterDemo(); },
-    exitDemo() {
-      state.dataMode = 'live';
-      state.children = [];
-      state.availableMonths = [];
-      state.selectedId = null;
-      showLogin();
-    },
-    showLiveLogin() {
-      state.dataMode = 'live';
-      showLogin();
+      await bootstrap();
     },
     setEntryDate(value) { state.entryDate = value; render(); },
     setMonth(value) { if (value) loadMonth(value); }
   };
 
-  async function enterDemo() {
-    showLoading('Preparing synthetic DEMO workspace…');
-    try {
-      if (!window.TamaharDemo) throw new Error('Demo module failed to load.');
-      state.dataMode = 'demo';
-      const data = await window.TamaharDemo.loadWorkspace(cfg.defaultMonth || state.month);
-      state.children = data.children;
-      state.availableMonths = data.availableMonths || [];
-      state.month = data.selectedMonth || state.month;
-      state.entryDate = `${state.month}-01`;
-      state.holidays = data.holidays || {};
-      state.selectedId = state.children[0]?.id || null;
-      state.page = 'today';
-      setStatus(`DEMO · ${state.children.length} synthetic records · read-only`);
-      render();
-    } catch (error) {
-      console.error(error);
-      state.dataMode = 'live';
-      showLogin(error?.message || 'Unable to load demo workspace.');
-    }
-  }
-
   async function bootstrap() {
-    showLoading('Opening pilot workspace…');
+    showLoading('Connecting to Phase 1 Supabase…');
     try {
-      if (!window.TamaharAuth) throw new Error('Authentication module failed to load.');
-      const session = await window.TamaharAuth.initialize();
-      if (!session) {
-        await enterDemo();
-        return;
-      }
-      state.dataMode = 'live';
-      showLoading('Connecting to Phase 1 Supabase…');
+      if (window.TamaharAuth?.initialize) await window.TamaharAuth.initialize();
       const data = await window.TamaharBackend.loadWorkspace();
       state.children = data.children;
       state.availableMonths = data.availableMonths || [];
