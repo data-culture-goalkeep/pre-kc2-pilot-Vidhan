@@ -92,6 +92,38 @@ async function testUnauthorizedClaimsRejected() {
   assert.equal(auth.getSession(), null);
 }
 
+async function testMissingRoleRejected() {
+  const {auth} = buildContext(async () => ({
+    ok: true,
+    status: 200,
+    async json() {
+      return authorizedPayload({
+        user: {id:'user-role-missing', app_metadata:{tamahar:{enabled:true}}}
+      });
+    }
+  }));
+  await assert.rejects(
+    auth.signIn('role-missing@example.org', 'irrelevant'),
+    /no approved Tamahar staff role/
+  );
+}
+
+async function testMissingScopeRejected() {
+  const {auth} = buildContext(async () => ({
+    ok: true,
+    status: 200,
+    async json() {
+      return authorizedPayload({
+        user: {id:'user-scope-missing', app_metadata:{tamahar:{enabled:true,role:'programme_manager',programmes:[]}}}
+      });
+    }
+  }));
+  await assert.rejects(
+    auth.signIn('scope-missing@example.org', 'irrelevant'),
+    /no approved Tamahar programme or child scope/
+  );
+}
+
 async function testSessionRestorationAndRefresh() {
   const expired = authorizedPayload({
     access_token: 'old-token',
@@ -122,6 +154,8 @@ async function testSessionRestorationAndRefresh() {
 async function main() {
   await testSignInAndToken();
   await testUnauthorizedClaimsRejected();
+  await testMissingRoleRejected();
+  await testMissingScopeRejected();
   await testSessionRestorationAndRefresh();
   console.log('auth-client tests passed');
 }
