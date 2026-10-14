@@ -17,13 +17,14 @@ function response(rows, status = 200) {
   };
 }
 
-function buildContext({key = 'sb_publishable_test_key', fetchImpl}) {
+function buildContext({key = 'sb_publishable_test_key', fetchImpl, accessToken = null}) {
   const context = {
     console,
     URL,
     atob: s => Buffer.from(s, 'base64').toString('utf8'),
     fetch: fetchImpl,
     window: {
+      TamaharAuth: accessToken ? {getAccessToken: async () => accessToken} : undefined,
       TAMAHAR_CONFIG: {
         dataMode: 'supabase',
         supabaseUrl: 'https://example.supabase.co',
@@ -44,6 +45,19 @@ async function testSecretKeyRejected() {
     fetchImpl: async () => { throw new Error('fetch must not run'); }
   });
   await assert.rejects(api.loadWorkspace(), /Unsafe Supabase key detected/);
+}
+
+async function testBearerTokenAttached() {
+  let seenAuthorization = null;
+  const fetchImpl = async (url, options) => {
+    seenAuthorization = options?.headers?.Authorization || null;
+    const table = new URL(url).pathname.split('/').pop();
+    if (table === 'children') return response([]);
+    return response([]);
+  };
+  const api = buildContext({fetchImpl, accessToken:'staff-access-token'});
+  await assert.rejects(api.loadWorkspace(), /No child rows were returned/);
+  assert.equal(seenAuthorization, 'Bearer staff-access-token');
 }
 
 async function testMappedWorkspace() {
@@ -116,6 +130,7 @@ async function testMappedWorkspace() {
 
 async function main() {
   await testSecretKeyRejected();
+  await testBearerTokenAttached();
   await testMappedWorkspace();
   console.log('backend-adapter tests passed');
 }
