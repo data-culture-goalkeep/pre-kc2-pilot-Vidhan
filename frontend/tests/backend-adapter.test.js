@@ -98,6 +98,8 @@ async function testMappedWorkspace() {
   const c = workspace.children[0];
   assert.equal(c.sourceId, 'CH001');
   assert.equal(c.programme, 0);
+  assert.equal(c.enrolled, '2025-06-01');
+  assert.deepEqual(JSON.parse(JSON.stringify(c.goals)), []);
   assert.equal(c.backendAdl.length, 1);
   assert.equal(c.backendDevelopment.length, 1);
   assert.equal(c.attendance['2026-09-01'], 'P');
