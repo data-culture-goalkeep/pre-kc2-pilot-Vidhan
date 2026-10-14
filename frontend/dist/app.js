@@ -73,9 +73,22 @@
     renderNav();
     $('view').innerHTML = `<section class="card card-pad"><h2 class="section-title">${esc(text)}</h2><p class="muted">Please wait.</p></section>`;
   }
+  function showLogin(message = '') {
+    $('nav').innerHTML = '';
+    $('crumb').textContent = 'Staff sign in';
+    setStatus('Authentication required');
+    $('view').innerHTML = `<section class="card card-pad auth-card"><div class="eyebrow">Tamahar staff access</div><h1 class="title">Sign in to the Programme Workspace</h1><p class="intro">Use your approved Tamahar staff account. Access is read-only and limited by the programmes and children assigned to your account.</p>${message ? `<div class="callout auth-error">${esc(message)}</div>` : ''}<form class="auth-form" onsubmit="TamaharUI.signIn(event)"><label>Email<input id="auth-email" type="email" autocomplete="username" required></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required></label><div class="auth-actions"><button class="btn" type="submit">Sign in</button></div></form></section>`;
+  }
   function showError(error) {
-    setStatus('Backend access pending');
-    $('view').innerHTML = `<section class="card card-pad error-state"><div class="eyebrow">Connection unavailable</div><h1 class="title">Backend integration is wired, but client access is not ready</h1><p class="intro">${esc(error?.message || error)}</p><div class="callout">The existing Phase 1 Supabase project is mapped correctly. Production browser access still needs an approved authentication flow, a permitted user, explicit Data API grants, and matching RLS policies. This frontend does not bypass those controls.</div><div class="state-actions"><button class="btn" onclick="TamaharUI.retry()">Retry connection</button></div></section>`;
+    if (error?.status === 401) {
+      showLogin('Your session is missing or expired. Sign in again.');
+      return;
+    }
+    setStatus(error?.status === 403 ? 'Access denied' : 'Backend access pending');
+    const detail = error?.status === 403
+      ? 'Your account is signed in but is not permitted to read this workspace data. Contact the Tamahar administrator responsible for staff access.'
+      : 'The Phase 1 Supabase integration is available, but this request could not be completed safely.';
+    $('view').innerHTML = `<section class="card card-pad error-state"><div class="eyebrow">${error?.status === 403 ? 'Access denied' : 'Connection unavailable'}</div><h1 class="title">Programme Workspace unavailable</h1><p class="intro">${esc(error?.message || error)}</p><div class="callout">${esc(detail)}</div><div class="state-actions"><button class="btn" onclick="TamaharUI.retry()">Retry connection</button>${window.TamaharAuth?.getSession?.() ? '<button class="btn ghost" onclick="TamaharUI.signOut()">Sign out</button>' : ''}</div></section>`;
   }
   function backendBanner() {
     return `<div class="callout" style="margin-bottom:18px"><strong>Phase 2 · read-only integration.</strong> Real Phase 1 records are used where the approved schema supports the PM reference workflow. Write actions remain disabled until the authorization and operational-write model are approved.</div>`;
@@ -92,7 +105,7 @@
       ['programmes','General info'],
       ['progress','Child progress']
     ];
-    $('nav').innerHTML = items.map(([key,label]) => `<button class="${state.page===key || (state.page==='child' && key==='children') ? 'active':''}" onclick="TamaharUI.go('${key}')">${label}</button>`).join('');
+    $('nav').innerHTML = items.map(([key,label]) => `<button class="${state.page===key || (state.page==='child' && key==='children') ? 'active':''}" onclick="TamaharUI.go('${key}')">${label}</button>`).join('') + '<button onclick="TamaharUI.signOut()">Sign out</button>';
     $('crumb').textContent = items.find(([key]) => key === state.page)?.[1] || (state.page === 'child' ? 'Child record' : 'Programme workspace');
   }
 
@@ -222,13 +235,41 @@
     setProgramme(value) { state.programmeFilter = value; render(); },
     setSearch(value) { state.search = value; render(); },
     retry() { bootstrap(); },
+    async signIn(event) {
+      event?.preventDefault?.();
+      const email = $('auth-email')?.value || '';
+      const password = $('auth-password')?.value || '';
+      showLoading('Signing in…');
+      try {
+        await window.TamaharAuth.signIn(email, password);
+        await bootstrap();
+      } catch (error) {
+        console.error(error);
+        showLogin(error?.message || 'Sign-in failed.');
+      }
+    },
+    async signOut() {
+      showLoading('Signing out…');
+      await window.TamaharAuth?.signOut?.();
+      state.children = [];
+      state.availableMonths = [];
+      state.selectedId = null;
+      showLogin();
+    },
     setEntryDate(value) { state.entryDate = value; render(); },
     setMonth(value) { if (value) loadMonth(value); }
   };
 
   async function bootstrap() {
-    showLoading('Connecting to Phase 1 Supabase…');
+    showLoading('Checking staff session…');
     try {
+      if (!window.TamaharAuth) throw new Error('Authentication module failed to load.');
+      const session = await window.TamaharAuth.initialize();
+      if (!session) {
+        showLogin();
+        return;
+      }
+      showLoading('Connecting to Phase 1 Supabase…');
       const data = await window.TamaharBackend.loadWorkspace();
       state.children = data.children;
       state.availableMonths = data.availableMonths || [];
