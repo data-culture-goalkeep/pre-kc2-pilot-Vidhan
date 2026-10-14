@@ -19,6 +19,7 @@
     children: [],
     month: cfg.defaultMonth || '2026-09',
     programmeFilter: 'all',
+    search: '',
     selectedId: null,
     entryDate: null,
     holidays: {},
@@ -37,7 +38,12 @@
     return state.children.find(c => c.id === Number(id));
   }
   function visibleChildren() {
-    return state.children.filter(c => state.programmeFilter === 'all' || c.programme === Number(state.programmeFilter));
+    const q = state.search.trim().toLowerCase();
+    return state.children.filter(c => {
+      const programmeMatches = state.programmeFilter === 'all' || c.programme === Number(state.programmeFilter);
+      const searchMatches = !q || [c.name,c.sourceId,c.centre,c.status,c.programmeSource].some(v => String(v || '').toLowerCase().includes(q));
+      return programmeMatches && searchMatches;
+    });
   }
   function attendanceStats(c) {
     const x = c.backendAttendanceSummary;
@@ -69,13 +75,13 @@
   }
   function showError(error) {
     setStatus('Backend access pending');
-    $('view').innerHTML = `<section class="card card-pad"><h1 class="title">Backend integration is wired, but client access is not ready</h1><p class="intro">${esc(error?.message || error)}</p><div class="callout">The existing Phase 1 Supabase project is mapped correctly. Production browser access still needs an approved authentication flow, a permitted user, explicit Data API grants, and matching RLS policies. This frontend does not bypass those controls.</div></section>`;
+    $('view').innerHTML = `<section class="card card-pad error-state"><div class="eyebrow">Connection unavailable</div><h1 class="title">Backend integration is wired, but client access is not ready</h1><p class="intro">${esc(error?.message || error)}</p><div class="callout">The existing Phase 1 Supabase project is mapped correctly. Production browser access still needs an approved authentication flow, a permitted user, explicit Data API grants, and matching RLS policies. This frontend does not bypass those controls.</div><div class="state-actions"><button class="btn" onclick="TamaharUI.retry()">Retry connection</button></div></section>`;
   }
   function backendBanner() {
     return `<div class="callout" style="margin-bottom:18px"><strong>Phase 2 · read-only integration.</strong> Real Phase 1 records are used where the approved schema supports the PM reference workflow. Write actions remain disabled until the authorization and operational-write model are approved.</div>`;
   }
   function filters() {
-    return `<div class="filters"><label class="field-inline">Month <input type="month" value="${esc(state.month)}" onchange="TamaharUI.setMonth(this.value)"></label><label class="field-inline">Programme <select onchange="TamaharUI.setProgramme(this.value)"><option value="all">All programmes</option>${PROGRAMMES.map((name,i)=>`<option value="${i}" ${String(state.programmeFilter)===String(i)?'selected':''}>${esc(name)}</option>`).join('')}</select></label></div>`;
+    return `<div class="filters"><label class="field-inline">Month <input type="month" value="${esc(state.month)}" onchange="TamaharUI.setMonth(this.value)"></label><label class="field-inline">Programme <select onchange="TamaharUI.setProgramme(this.value)"><option value="all">All programmes</option>${PROGRAMMES.map((name,i)=>`<option value="${i}" ${String(state.programmeFilter)===String(i)?'selected':''}>${esc(name)}</option>`).join('')}</select></label><label class="field-inline search-field">Search <input type="search" placeholder="Child, ID, centre…" value="${esc(state.search)}" oninput="TamaharUI.setSearch(this.value)"></label></div>`;
   }
 
   function renderNav() {
@@ -214,6 +220,8 @@
     openChild(id) { state.selectedId = Number(id); state.childTab='overview'; state.page='child'; render(); window.scrollTo({top:0,behavior:'smooth'}); },
     setChildTab(tab) { state.childTab = tab; render(); },
     setProgramme(value) { state.programmeFilter = value; render(); },
+    setSearch(value) { state.search = value; render(); },
+    retry() { bootstrap(); },
     setEntryDate(value) { state.entryDate = value; render(); },
     setMonth(value) { if (value) loadMonth(value); }
   };
