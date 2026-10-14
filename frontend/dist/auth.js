@@ -3,6 +3,8 @@
 
   const cfg = window.TAMAHAR_CONFIG || {};
   const storageKey = 'tamahar.supabase.session.v1';
+  const recoveryVerifierKey = 'tamahar.supabase.recovery.verifier.v1';
+  const recoveryPendingKey = 'tamahar.supabase.recovery.pending.v1';
   let session = null;
   let refreshPromise = null;
 
@@ -24,6 +26,17 @@
       if (session) window.localStorage?.setItem(storageKey, JSON.stringify(session));
       else window.localStorage?.removeItem(storageKey);
     } catch {}
+  }
+
+  function setLocal(key, value) {
+    try {
+      if (value == null) window.localStorage?.removeItem(key);
+      else window.localStorage?.setItem(key, String(value));
+    } catch {}
+  }
+
+  function getLocal(key) {
+    try { return window.localStorage?.getItem(key) || null; } catch { return null; }
   }
 
   function expiresSoon(value) {
@@ -105,6 +118,21 @@
     }
   }
 
+  async function fetchUser(accessToken) {
+    return authRequest('/user', {method:'GET', accessToken});
+  }
+
+  async function completeSession(payload) {
+    let next = normalizeSession(payload);
+    if (!next) throw new Error('Supabase returned an invalid session.');
+    if (!next.user) {
+      next.user = await fetchUser(next.access_token);
+    }
+    assertAuthorizedUser(next.user);
+    writeStoredSession(next);
+    return next;
+  }
+
   async function refreshSession() {
     if (refreshPromise) return refreshPromise;
     if (!session?.refresh_token) return null;
@@ -113,11 +141,7 @@
         const payload = await authRequest('/token?grant_type=refresh_token', {
           body: {refresh_token: session.refresh_token}
         });
-        const next = normalizeSession(payload);
-        if (!next) throw new Error('Supabase returned an invalid refreshed session.');
-        assertAuthorizedUser(next.user);
-        writeStoredSession(next);
-        return next;
+        return await completeSession(payload);
       } catch (error) {
         writeStoredSession(null);
         throw error;
@@ -126,6 +150,183 @@
       }
     })();
     return refreshPromise;
+  }
+
+  function callbackParams() {
+    const query = new URLSearchParams(window.location?.search || '');
+    const hash = new URLSearchParams(String(window.location?.hash || '').replace(/^#/, ''));
+    return {query, hash};
+  }
+
+  function clearCallbackUrl() {
+    try {
+      const path = window.location?.pathname || '/';
+      window.history?.replaceState?.({}, '', path);
+    } catch {}
+  }
+
+  function recoveryError(params) {
+    const source = params.hash.get('error') ? params.hash : params.query;
+    const code = source.get('error_code') || source.get('error') || null;
+    if (!code) return null;
+    return {
+      kind:'error',
+      code,
+      message: source.get('error_description') || 'The password-recovery link is invalid or has expired.'
+    };
+  }
+
+  function bytesToBase64Url(bytes) {
+    let binary = '';
+    for (const b of bytes) binary += String.fromCharCode(b);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  function randomVerifier() {
+    const bytes = new Uint8Array(48);
+    window.crypto.getRandomValues(bytes);
+    return bytesToBase64Url(bytes);
+  }
+
+  async function codeChallenge(verifier) {
+    const bytes = new TextEncoder().encode(verifier);
+    const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+    return bytesToBase64Url(new Uint8Array(digest));
+  }
+
+  function recoveryRedirectUrl() {
+    if (cfg.recoveryRedirectUrl) return String(cfg.recoveryRedirectUrl);
+    const origin = window.location?.origin || '';
+    const path = window.location?.pathname || '/';
+    return `${origin}${path}`;
+  }
+
+  async function requestPasswordReset(email) {
+    const address = String(email || '').trim();
+    if (!address) throw new Error('Enter your email address.');
+    const verifier = randomVerifier();
+    const challenge = await codeChallenge(verifier);
+    setLocal(recoveryVerifierKey, verifier);
+    setLocal(recoveryPendingKey, null);
+    try {
+      const redirect = encodeURIComponent(recoveryRedirectUrl());
+      await authRequest(`/recover?redirect_to=${redirect}`, {
+        body: {
+          email: address,
+          code_challenge: challenge,
+          code_challenge_method: 's256'
+        }
+      });
+    } catch (error) {
+      setLocal(recoveryVerifierKey, null);
+      throw error;
+    }
+    return {sent:true};
+  }
+
+  async function recoveryFromPkce(code) {
+    const verifier = getLocal(recoveryVerifierKey);
+    if (!verifier) {
+      const error = new Error('This recovery link cannot be completed in this browser because its PKCE verifier is missing. Request a new password-reset email from this browser.');
+      error.code = 'missing_pkce_verifier';
+      throw error;
+    }
+    const payload = await authRequest('/token?grant_type=pkce', {
+      body: {auth_code: code, code_verifier: verifier}
+    });
+    setLocal(recoveryVerifierKey, null);
+    setLocal(recoveryPendingKey, 'true');
+    return completeSession(payload);
+  }
+
+  async function recoveryFromTokenHash(tokenHash) {
+    const payload = await authRequest('/verify', {
+      body: {type:'recovery', token_hash:tokenHash}
+    });
+    setLocal(recoveryPendingKey, 'true');
+    return completeSession(payload);
+  }
+
+  async function recoveryFromImplicit(hash) {
+    const accessToken = hash.get('access_token');
+    const refreshToken = hash.get('refresh_token');
+    if (!accessToken || !refreshToken) return null;
+    const payload = {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      token_type: hash.get('token_type') || 'bearer',
+      expires_in: Number(hash.get('expires_in') || 3600),
+      expires_at: Number(hash.get('expires_at') || 0) || undefined
+    };
+    setLocal(recoveryPendingKey, 'true');
+    return completeSession(payload);
+  }
+
+  async function consumeRecoveryCallback() {
+    const params = callbackParams();
+    const callbackError = recoveryError(params);
+    if (callbackError) {
+      setLocal(recoveryPendingKey, null);
+      setLocal(recoveryVerifierKey, null);
+      clearCallbackUrl();
+      return callbackError;
+    }
+
+    try {
+      const type = params.query.get('type') || params.hash.get('type');
+      const code = params.query.get('code');
+      const tokenHash = params.query.get('token_hash') || params.hash.get('token_hash');
+
+      if (code) {
+        const next = await recoveryFromPkce(code);
+        clearCallbackUrl();
+        return {kind:'recovery', session:next};
+      }
+      if (tokenHash && type === 'recovery') {
+        const next = await recoveryFromTokenHash(tokenHash);
+        clearCallbackUrl();
+        return {kind:'recovery', session:next};
+      }
+      if (type === 'recovery' && params.hash.get('access_token')) {
+        const next = await recoveryFromImplicit(params.hash);
+        clearCallbackUrl();
+        return {kind:'recovery', session:next};
+      }
+
+      if (getLocal(recoveryPendingKey) === 'true') {
+        session = readStoredSession();
+        if (session) return {kind:'recovery', session};
+        setLocal(recoveryPendingKey, null);
+      }
+      return {kind:'none'};
+    } catch (error) {
+      setLocal(recoveryPendingKey, null);
+      clearCallbackUrl();
+      return {
+        kind:'error',
+        code:error?.code || 'recovery_failed',
+        message:error?.message || 'The password-recovery link could not be verified.'
+      };
+    }
+  }
+
+  async function updatePassword(password) {
+    const nextPassword = String(password || '');
+    if (nextPassword.length < 8) {
+      throw new Error('Use a password with at least 8 characters.');
+    }
+    if (!session) session = readStoredSession();
+    if (!session?.access_token) throw new Error('The password-recovery session is missing or expired.');
+    const user = await authRequest('/user', {
+      method:'PUT',
+      accessToken:session.access_token,
+      body:{password:nextPassword}
+    });
+    session.user = user || session.user;
+    writeStoredSession(session);
+    setLocal(recoveryPendingKey, null);
+    setLocal(recoveryVerifierKey, null);
+    return user;
   }
 
   async function initialize() {
@@ -145,23 +346,22 @@
     const payload = await authRequest('/token?grant_type=password', {
       body: {email: String(email || '').trim(), password: String(password || '')}
     });
-    const next = normalizeSession(payload);
-    if (!next) throw new Error('Supabase returned an invalid session.');
     try {
-      assertAuthorizedUser(next.user);
+      return await completeSession(payload);
     } catch (error) {
       try {
-        await authRequest('/logout', {accessToken: next.access_token});
+        const token = payload?.access_token;
+        if (token) await authRequest('/logout', {accessToken: token});
       } catch {}
       throw error;
     }
-    writeStoredSession(next);
-    return next;
   }
 
   async function signOut() {
     const token = session?.access_token;
     writeStoredSession(null);
+    setLocal(recoveryPendingKey, null);
+    setLocal(recoveryVerifierKey, null);
     if (!token) return;
     try { await authRequest('/logout', {accessToken: token}); } catch {}
   }
@@ -183,5 +383,15 @@
     return session?.user || null;
   }
 
-  window.TamaharAuth = {initialize, signIn, signOut, getAccessToken, getSession, getUser};
+  window.TamaharAuth = {
+    initialize,
+    signIn,
+    signOut,
+    requestPasswordReset,
+    consumeRecoveryCallback,
+    updatePassword,
+    getAccessToken,
+    getSession,
+    getUser
+  };
 })();
