@@ -19,8 +19,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check browser JavaScript syntax
+        run: |
+          node --check frontend/dist/auth.js
+          node --check frontend/dist/backend.js
+          node --check frontend/dist/demo.js
+          node --check frontend/dist/app.js
       - name: Run authentication client tests
         run: node frontend/tests/auth-client.test.js
+      - name: Run demo data tests
+        run: node frontend/tests/demo-data.test.js
+      - name: Verify frontend module assembly
+        run: node frontend/tests/frontend-assembly.test.js
       - name: Run backend adapter tests
         run: node frontend/tests/backend-adapter.test.js
       - name: Test runtime config generation
