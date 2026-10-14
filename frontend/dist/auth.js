@@ -87,6 +87,22 @@
       error.code = 'tamahar_access_not_enabled';
       throw error;
     }
+    const role = String(claims.role || '');
+    const allowedRoles = new Set(['administrator','management','programme_manager','teacher','therapist']);
+    if (!allowedRoles.has(role)) {
+      const error = new Error('Your account is enabled but has no approved Tamahar staff role.');
+      error.code = 'tamahar_role_missing';
+      throw error;
+    }
+    if (!['administrator','management'].includes(role)) {
+      const programmes = Array.isArray(claims.programmes) ? claims.programmes.filter(Boolean) : [];
+      const childIds = Array.isArray(claims.child_ids) ? claims.child_ids.filter(Boolean) : [];
+      if (!programmes.length && !(['teacher','therapist'].includes(role) && childIds.length)) {
+        const error = new Error('Your account has no approved Tamahar programme or child scope.');
+        error.code = 'tamahar_scope_missing';
+        throw error;
+      }
+    }
   }
 
   async function refreshSession() {
