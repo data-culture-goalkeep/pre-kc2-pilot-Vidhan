@@ -23,7 +23,8 @@
     selectedId: null,
     entryDate: null,
     holidays: {},
-    availableMonths: []
+    availableMonths: [],
+    dataMode: 'live'
   };
 
   function programmeName(index) {
@@ -77,7 +78,7 @@
     $('nav').innerHTML = '';
     $('crumb').textContent = 'Staff sign in';
     setStatus('Authentication required');
-    $('view').innerHTML = `<section class="card card-pad auth-card"><div class="eyebrow">Tamahar staff access</div><h1 class="title">Sign in to the Programme Workspace</h1><p class="intro">Use your approved Tamahar staff account. Access is read-only and limited by the programmes and children assigned to your account.</p>${message ? `<div class="callout auth-error">${esc(message)}</div>` : ''}<form class="auth-form" onsubmit="TamaharUI.signIn(event)"><label>Email<input id="auth-email" type="email" autocomplete="username" required></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required></label><div class="auth-actions"><button class="btn" type="submit">Sign in</button></div></form></section>`;
+    $('view').innerHTML = `<section class="card card-pad auth-card"><div class="eyebrow">Tamahar staff access</div><h1 class="title">Sign in to the Programme Workspace</h1><p class="intro">Use your approved Tamahar staff account. Access is read-only and limited by the programmes and children assigned to your account.</p>${message ? `<div class="callout auth-error">${esc(message)}</div>` : ''}<form class="auth-form" onsubmit="TamaharUI.signIn(event)"><label>Email<input id="auth-email" type="email" autocomplete="username" required></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required></label><div class="auth-actions"><button class="btn" type="submit">Sign in</button></div></form><div class="demo-note"><strong>Pilot preview</strong><p class="muted">No approved staff account yet? Open a synthetic DEMO workspace. Demo records are fictional, never written to Supabase, and are visibly labelled throughout the interface.</p><button class="btn ghost" onclick="TamaharUI.enterDemo()">Open DEMO workspace</button></div></section>`;
   }
   function showError(error) {
     if (error?.status === 401) {
@@ -91,7 +92,10 @@
     $('view').innerHTML = `<section class="card card-pad error-state"><div class="eyebrow">${error?.status === 403 ? 'Access denied' : 'Connection unavailable'}</div><h1 class="title">Programme Workspace unavailable</h1><p class="intro">${esc(error?.message || error)}</p><div class="callout">${esc(detail)}</div><div class="state-actions"><button class="btn" onclick="TamaharUI.retry()">Retry connection</button>${window.TamaharAuth?.getSession?.() ? '<button class="btn ghost" onclick="TamaharUI.signOut()">Sign out</button>' : ''}</div></section>`;
   }
   function backendBanner() {
-    return `<div class="callout" style="margin-bottom:18px"><strong>Phase 2 · read-only integration.</strong> Real Phase 1 records are used where the approved schema supports the PM reference workflow. Write actions remain disabled until the authorization and operational-write model are approved.</div>`;
+    if (state.dataMode === 'demo') {
+      return `<div class="callout" style="margin-bottom:18px"><strong>DEMO MODE · synthetic data only.</strong><span class="demo-badge">DEMO</span> No displayed child, attendance, therapy or assessment record is real. Nothing in this mode is read from or written to Supabase.</div>`;
+    }
+    return `<div class="callout" style="margin-bottom:18px"><strong>Phase 2 · authenticated read-only integration.</strong> Real Phase 1 records are shown only when the signed-in user's existing RLS scope permits them. Write actions remain disabled.</div>`;
   }
   function filters() {
     return `<div class="filters"><label class="field-inline">Month <input type="month" value="${esc(state.month)}" onchange="TamaharUI.setMonth(this.value)"></label><label class="field-inline">Programme <select onchange="TamaharUI.setProgramme(this.value)"><option value="all">All programmes</option>${PROGRAMMES.map((name,i)=>`<option value="${i}" ${String(state.programmeFilter)===String(i)?'selected':''}>${esc(name)}</option>`).join('')}</select></label><label class="field-inline search-field">Search <input type="search" placeholder="Child, ID, centre…" value="${esc(state.search)}" oninput="TamaharUI.setSearch(this.value)"></label></div>`;
@@ -105,7 +109,7 @@
       ['programmes','General info'],
       ['progress','Child progress']
     ];
-    $('nav').innerHTML = items.map(([key,label]) => `<button class="${state.page===key || (state.page==='child' && key==='children') ? 'active':''}" onclick="TamaharUI.go('${key}')">${label}</button>`).join('') + '<button onclick="TamaharUI.signOut()">Sign out</button>';
+    $('nav').innerHTML = items.map(([key,label]) => `<button class="${state.page===key || (state.page==='child' && key==='children') ? 'active':''}" onclick="TamaharUI.go('${key}')">${label}</button>`).join('') + (state.dataMode === 'demo' ? '<button onclick="TamaharUI.exitDemo()">Exit DEMO</button>' : '<button onclick="TamaharUI.signOut()">Sign out</button>');
     $('crumb').textContent = items.find(([key]) => key === state.page)?.[1] || (state.page === 'child' ? 'Child record' : 'Programme workspace');
   }
 
@@ -214,13 +218,16 @@
   }
 
   async function loadMonth(month) {
-    showLoading(`Loading ${month} from Supabase…`);
+    showLoading(state.dataMode === 'demo' ? `Loading ${month} DEMO data…` : `Loading ${month} from Supabase…`);
     try {
-      const result = await window.TamaharBackend.loadMonth(state.children, month);
+      const source = state.dataMode === 'demo' ? window.TamaharDemo : window.TamaharBackend;
+      const result = await source.loadMonth(state.children, month);
       state.month = month;
       state.entryDate = `${month}-01`;
       state.holidays = result.holidays || {};
-      setStatus(`Connected · ${state.children.length} Phase 1 child records · read-only`);
+      setStatus(state.dataMode === 'demo'
+        ? `DEMO · ${state.children.length} synthetic records · read-only`
+        : `Connected · ${state.children.length} Phase 1 child records · read-only`);
       render();
     } catch (error) {
       console.error(error);
@@ -234,7 +241,7 @@
     setChildTab(tab) { state.childTab = tab; render(); },
     setProgramme(value) { state.programmeFilter = value; render(); },
     setSearch(value) { state.search = value; render(); },
-    retry() { bootstrap(); },
+    retry() { state.dataMode === 'demo' ? enterDemo() : bootstrap(); },
     async signIn(event) {
       event?.preventDefault?.();
       const email = $('auth-email')?.value || '';
@@ -242,6 +249,7 @@
       showLoading('Signing in…');
       try {
         await window.TamaharAuth.signIn(email, password);
+        state.dataMode = 'live';
         await bootstrap();
       } catch (error) {
         console.error(error);
@@ -256,14 +264,45 @@
       state.selectedId = null;
       showLogin();
     },
+    async enterDemo() { await enterDemo(); },
+    exitDemo() {
+      state.dataMode = 'live';
+      state.children = [];
+      state.availableMonths = [];
+      state.selectedId = null;
+      showLogin();
+    },
     setEntryDate(value) { state.entryDate = value; render(); },
     setMonth(value) { if (value) loadMonth(value); }
   };
+
+  async function enterDemo() {
+    showLoading('Preparing synthetic DEMO workspace…');
+    try {
+      if (!window.TamaharDemo) throw new Error('Demo module failed to load.');
+      state.dataMode = 'demo';
+      const data = await window.TamaharDemo.loadWorkspace(cfg.defaultMonth || state.month);
+      state.children = data.children;
+      state.availableMonths = data.availableMonths || [];
+      state.month = data.selectedMonth || state.month;
+      state.entryDate = `${state.month}-01`;
+      state.holidays = data.holidays || {};
+      state.selectedId = state.children[0]?.id || null;
+      state.page = 'today';
+      setStatus(`DEMO · ${state.children.length} synthetic records · read-only`);
+      render();
+    } catch (error) {
+      console.error(error);
+      state.dataMode = 'live';
+      showLogin(error?.message || 'Unable to load demo workspace.');
+    }
+  }
 
   async function bootstrap() {
     showLoading('Checking staff session…');
     try {
       if (!window.TamaharAuth) throw new Error('Authentication module failed to load.');
+      state.dataMode = 'live';
       const session = await window.TamaharAuth.initialize();
       if (!session) {
         showLogin();
