@@ -18,5 +18,9 @@ assert.ok(backend > auth, 'backend must load after auth client');
 assert.ok(app > backend, 'app must load after backend');
 assert.equal(html.includes('demo.js'), false, 'demo module must not be loaded');
 assert.equal(html.includes('Open DEMO workspace'), false, 'demo entry point must not exist');
+const appSource = fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.js'), 'utf8');
+assert.ok(appSource.includes('Forgot password'), 'forgot-password entry point must exist');
+assert.ok(appSource.includes('Set a new password'), 'set-new-password screen must exist');
+assert.ok(appSource.includes('consumeRecoveryCallback'), 'recovery callback must run before normal bootstrap');
 
 console.log('frontend assembly tests passed');
