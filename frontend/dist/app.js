@@ -78,7 +78,7 @@
     $('nav').innerHTML = '';
     $('crumb').textContent = 'Staff sign in';
     setStatus('Authentication required');
-    $('view').innerHTML = `<section class="card card-pad auth-card"><div class="eyebrow">Tamahar staff access</div><h1 class="title">Sign in to the Programme Workspace</h1><p class="intro">Use your approved Tamahar staff account. Access is read-only and limited by the programmes and children assigned to your account.</p>${message ? `<div class="callout auth-error">${esc(message)}</div>` : ''}<form class="auth-form" onsubmit="TamaharUI.signIn(event)"><label>Email<input id="auth-email" type="email" autocomplete="username" required></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required></label><div class="auth-actions"><button class="btn" type="submit">Sign in</button></div></form><div class="demo-note"><strong>Pilot preview</strong><p class="muted">No approved staff account yet? Open a synthetic DEMO workspace. Demo records are fictional, never written to Supabase, and are visibly labelled throughout the interface.</p><button class="btn ghost" onclick="TamaharUI.enterDemo()">Open DEMO workspace</button></div></section>`;
+    $('view').innerHTML = `<section class="card card-pad auth-card"><div class="eyebrow">Tamahar staff live access</div><h1 class="title">Sign in for live Supabase data</h1><p class="intro">The pilot opens in DEMO mode by default. Use an approved Tamahar staff account only when live data access has been provisioned.</p>${message ? `<div class="callout auth-error">${esc(message)}</div>` : ''}<form class="auth-form" onsubmit="TamaharUI.signIn(event)"><label>Email<input id="auth-email" type="email" autocomplete="username" required></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required></label><div class="auth-actions"><button class="btn" type="submit">Sign in to live data</button><button class="btn ghost" type="button" onclick="TamaharUI.enterDemo()">Return to DEMO</button></div></form></section>`;
   }
   function showError(error) {
     if (error?.status === 401) {
@@ -109,7 +109,7 @@
       ['programmes','General info'],
       ['progress','Child progress']
     ];
-    $('nav').innerHTML = items.map(([key,label]) => `<button class="${state.page===key || (state.page==='child' && key==='children') ? 'active':''}" onclick="TamaharUI.go('${key}')">${label}</button>`).join('') + (state.dataMode === 'demo' ? '<button onclick="TamaharUI.exitDemo()">Exit DEMO</button>' : '<button onclick="TamaharUI.signOut()">Sign out</button>');
+    $('nav').innerHTML = items.map(([key,label]) => `<button class="${state.page===key || (state.page==='child' && key==='children') ? 'active':''}" onclick="TamaharUI.go('${key}')">${label}</button>`).join('') + (state.dataMode === 'demo' ? '<button onclick="TamaharUI.showLiveLogin()">Live staff sign in</button>' : '<button onclick="TamaharUI.signOut()">Sign out</button>');
     $('crumb').textContent = items.find(([key]) => key === state.page)?.[1] || (state.page === 'child' ? 'Child record' : 'Programme workspace');
   }
 
@@ -272,6 +272,10 @@
       state.selectedId = null;
       showLogin();
     },
+    showLiveLogin() {
+      state.dataMode = 'live';
+      showLogin();
+    },
     setEntryDate(value) { state.entryDate = value; render(); },
     setMonth(value) { if (value) loadMonth(value); }
   };
@@ -299,15 +303,15 @@
   }
 
   async function bootstrap() {
-    showLoading('Checking staff session…');
+    showLoading('Opening pilot workspace…');
     try {
       if (!window.TamaharAuth) throw new Error('Authentication module failed to load.');
-      state.dataMode = 'live';
       const session = await window.TamaharAuth.initialize();
       if (!session) {
-        showLogin();
+        await enterDemo();
         return;
       }
+      state.dataMode = 'live';
       showLoading('Connecting to Phase 1 Supabase…');
       const data = await window.TamaharBackend.loadWorkspace();
       state.children = data.children;
