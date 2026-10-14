@@ -74,9 +74,9 @@
       id:i+1, childPk:r.child_pk, sourceId:r.child_id, name:r.child_name,
       programme: Object.prototype.hasOwnProperty.call(programMap,r.current_program_source) ? programMap[r.current_program_source] : -1,
       programmeSource:r.current_program_source || '', centre:r.centre_name || '', gender:r.gender || '', dob:r.date_of_birth || '',
-      age:ageAt(r.date_of_birth), severity:r.severity || 'Not recorded', enrolled:r.enrollment_date || '1900-01-01',
+      age:ageAt(r.date_of_birth), severity:r.severity || 'Not recorded', enrolled:r.enrollment_date || '',
       moves:[], exit:r.exit_date || '', status:r.status || '', disabilityType:r.disability_type || '', disabilitySubType:r.disability_sub_type || '',
-      attendance:{}, attendanceRaw:{}, absences:{}, therapy:{}, therapySessions:[], goals:[blankGoal()], adl:[], quarterly:[], behaviours:[], home:[], work:[], developmental:[], parentSessions:[],
+      attendance:{}, attendanceRaw:{}, absences:{}, therapy:{}, therapySessions:[], goals:[], adl:[], quarterly:[], behaviours:[], home:[], work:[], developmental:[], parentSessions:[],
       backendAdl:[], backendDevelopment:[], backendAttendanceSummary:null, backendRaw:r
     };
   }
