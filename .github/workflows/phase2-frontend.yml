@@ -1,0 +1,33 @@
+name: Phase 2 frontend checks
+
+on:
+  push:
+    branches:
+      - phase2/frontend-polish
+      - phase2/frontend-integration
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "vercel.json"
+      - ".github/workflows/phase2-frontend.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run backend adapter tests
+        run: node frontend/tests/backend-adapter.test.js
+      - name: Verify runtime config build
+        env:
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_test
+        run: |
+          python3 frontend/scripts/render_runtime_config.py
+          test -s frontend/dist/runtime-config.js
+          grep -q "https://example.supabase.co" frontend/dist/runtime-config.js
+      - name: Verify static entrypoint
+        run: test -s frontend/dist/index.html
