@@ -26,12 +26,31 @@ def legacy_role(value: str) -> str | None:
         return None
 
 
-if not url:
-    raise SystemExit("SUPABASE_URL is required")
-if not key:
-    raise SystemExit("SUPABASE_PUBLISHABLE_KEY is required")
 if key.startswith("sb_secret_") or legacy_role(key) == "service_role":
-    raise SystemExit("Refusing to expose a Supabase secret/service-role key in browser configuration")
+    raise SystemExit(
+        "Refusing to expose a Supabase secret/service-role key in browser configuration"
+    )
+
+missing = [
+    name
+    for name, value in (
+        ("SUPABASE_URL", url),
+        ("SUPABASE_PUBLISHABLE_KEY", key),
+    )
+    if not value
+]
+
+if missing:
+    # A missing public-client setting must not make a static Preview undeployable.
+    # Generate an intentionally disconnected config: backend.js will show the
+    # existing safe "backend access pending" state and will not query Supabase.
+    print(
+        "Warning: missing browser runtime configuration: "
+        + ", ".join(missing)
+        + ". Generating a disconnected read-only config."
+    )
+    url = ""
+    key = ""
 
 payload = (
     "// Generated at deployment time. Do not commit this file.\n"
@@ -41,5 +60,7 @@ payload = (
     f"  supabasePublishableKey: {json.dumps(key)}\n"
     "});\n"
 )
+
+OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 OUTPUT.write_text(payload, encoding="utf-8")
 print(f"Wrote {OUTPUT}")
