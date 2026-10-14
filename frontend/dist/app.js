@@ -77,7 +77,25 @@
     $('nav').innerHTML = '';
     $('crumb').textContent = 'Staff sign in';
     setStatus('Authentication required');
-    $('view').innerHTML = `<section class="card card-pad auth-card"><div class="eyebrow">Tamahar staff access</div><h1 class="title">Sign in to the Programme Workspace</h1><p class="intro">Use the Supabase Auth account that was provisioned for this pilot. Your session is kept in this browser and refreshed automatically.</p>${message ? `<div class="callout auth-error">${esc(message)}</div>` : ''}<form class="auth-form" onsubmit="TamaharUI.signIn(event)"><label>Email<input id="auth-email" type="email" autocomplete="username" required></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required></label><div class="auth-actions"><button class="btn" type="submit">Sign in</button></div></form></section>`;
+    $('view').innerHTML = `<section class="card card-pad auth-card"><div class="eyebrow">Tamahar staff access</div><h1 class="title">Sign in to the Programme Workspace</h1><p class="intro">Use the Supabase Auth account that was provisioned for this pilot. Your session is kept in this browser and refreshed automatically.</p>${message ? `<div class="callout auth-error">${esc(message)}</div>` : ''}<form class="auth-form" onsubmit="TamaharUI.signIn(event)"><label>Email<input id="auth-email" type="email" autocomplete="username" required></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required></label><div class="auth-actions"><button class="btn" type="submit">Sign in</button><button class="btn ghost" type="button" onclick="TamaharUI.showForgotPassword()">Forgot password</button></div></form></section>`;
+  }
+  function showForgotPassword(message = '') {
+    $('nav').innerHTML = '';
+    $('crumb').textContent = 'Password recovery';
+    setStatus('Password recovery');
+    $('view').innerHTML = `<section class="card card-pad auth-card"><div class="eyebrow">Tamahar staff access</div><h1 class="title">Reset your password</h1><p class="intro">Enter the email address for your existing Tamahar account. One recovery email will be sent; the app does not automatically retry or resend.</p>${message ? `<div class="callout auth-error">${esc(message)}</div>` : ''}<form class="auth-form" onsubmit="TamaharUI.requestPasswordReset(event)"><label>Email<input id="recovery-email" type="email" autocomplete="email" required></label><div class="auth-actions"><button class="btn" type="submit">Send recovery email</button><button class="btn ghost" type="button" onclick="TamaharUI.showLogin()">Back to sign in</button></div></form></section>`;
+  }
+  function showRecoveryError(message) {
+    $('nav').innerHTML = '';
+    $('crumb').textContent = 'Password recovery';
+    setStatus('Recovery link invalid');
+    $('view').innerHTML = `<section class="card card-pad auth-card"><div class="eyebrow">Recovery link problem</div><h1 class="title">This password-reset link cannot be used</h1><div class="callout auth-error">${esc(message || 'The recovery link is invalid or has expired.')}</div><p class="muted">Request a new recovery email after Supabase's email rate limit has cleared. Do not keep reusing this expired link.</p><div class="auth-actions"><button class="btn" onclick="TamaharUI.showForgotPassword()">Request a new link</button><button class="btn ghost" onclick="TamaharUI.showLogin()">Back to sign in</button></div></section>`;
+  }
+  function showSetPassword(message = '') {
+    $('nav').innerHTML = '';
+    $('crumb').textContent = 'Set new password';
+    setStatus('Recovery session verified');
+    $('view').innerHTML = `<section class="card card-pad auth-card"><div class="eyebrow">Tamahar staff access</div><h1 class="title">Set a new password</h1><p class="intro">Your recovery link has been verified. Choose a new password for this existing account.</p>${message ? `<div class="callout auth-error">${esc(message)}</div>` : ''}<form class="auth-form" onsubmit="TamaharUI.updatePassword(event)"><label>New password<input id="new-password" type="password" autocomplete="new-password" minlength="8" required></label><label>Confirm new password<input id="confirm-password" type="password" autocomplete="new-password" minlength="8" required></label><div class="auth-actions"><button class="btn" type="submit">Set new password</button></div></form></section>`;
   }
   function showError(error) {
     const isAuth = error?.status === 401;
@@ -238,6 +256,40 @@
     setProgramme(value) { state.programmeFilter = value; render(); },
     setSearch(value) { state.search = value; render(); },
     retry() { bootstrap(); },
+    showLogin() { showLogin(); },
+    showForgotPassword() { showForgotPassword(); },
+    async requestPasswordReset(event) {
+      event?.preventDefault?.();
+      const email = $('recovery-email')?.value || '';
+      showLoading('Requesting password-recovery email…');
+      try {
+        await window.TamaharAuth.requestPasswordReset(email);
+        showForgotPassword('Recovery email sent. Use the newest link only. If Supabase reports a rate limit, wait for the limit to clear before requesting another email.');
+      } catch (error) {
+        console.error(error);
+        const rateLimited = error?.status === 429 || /rate limit/i.test(error?.message || '');
+        showForgotPassword(rateLimited
+          ? 'Supabase email rate limit is active. Do not retry repeatedly; wait for the limit to clear, then request one new recovery email.'
+          : (error?.message || 'Unable to send a recovery email.'));
+      }
+    },
+    async updatePassword(event) {
+      event?.preventDefault?.();
+      const password = $('new-password')?.value || '';
+      const confirm = $('confirm-password')?.value || '';
+      if (password !== confirm) {
+        showSetPassword('The two password entries do not match.');
+        return;
+      }
+      showLoading('Updating password…');
+      try {
+        await window.TamaharAuth.updatePassword(password);
+        await bootstrap();
+      } catch (error) {
+        console.error(error);
+        showSetPassword(error?.message || 'Unable to update the password.');
+      }
+    },
     async signIn(event) {
       event?.preventDefault?.();
       const email = $('auth-email')?.value || '';
@@ -270,6 +322,15 @@
     showLoading('Connecting to Phase 1 Supabase…');
     try {
       if (!window.TamaharAuth) throw new Error('Authentication module failed to load.');
+      const recovery = await window.TamaharAuth.consumeRecoveryCallback();
+      if (recovery?.kind === 'error') {
+        showRecoveryError(recovery.message);
+        return;
+      }
+      if (recovery?.kind === 'recovery') {
+        showSetPassword();
+        return;
+      }
       const session = await window.TamaharAuth.initialize();
       if (!session) {
         showLogin();
