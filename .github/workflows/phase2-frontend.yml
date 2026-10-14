@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Run authentication client tests
+        run: node frontend/tests/auth-client.test.js
       - name: Run backend adapter tests
         run: node frontend/tests/backend-adapter.test.js
       - name: Test runtime config generation
