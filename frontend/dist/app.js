@@ -73,19 +73,25 @@
     renderNav();
     $('view').innerHTML = `<section class="card card-pad"><h2 class="section-title">${esc(text)}</h2><p class="muted">Please wait.</p></section>`;
   }
+  function showLogin(message = '') {
+    $('nav').innerHTML = '';
+    $('crumb').textContent = 'Staff sign in';
+    setStatus('Authentication required');
+    $('view').innerHTML = `<section class="card card-pad auth-card"><div class="eyebrow">Tamahar staff access</div><h1 class="title">Sign in to the Programme Workspace</h1><p class="intro">Use the Supabase Auth account that was provisioned for this pilot. Your session is kept in this browser and refreshed automatically.</p>${message ? `<div class="callout auth-error">${esc(message)}</div>` : ''}<form class="auth-form" onsubmit="TamaharUI.signIn(event)"><label>Email<input id="auth-email" type="email" autocomplete="username" required></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required></label><div class="auth-actions"><button class="btn" type="submit">Sign in</button></div></form></section>`;
+  }
   function showError(error) {
     const isAuth = error?.status === 401;
     const isDenied = error?.status === 403;
-    setStatus(isAuth ? 'Authentication required' : isDenied ? 'Access denied' : 'Backend access pending');
-    const title = isAuth ? 'Authentication is required for real programme data'
-      : isDenied ? 'Your current access is not permitted'
-      : 'Programme Workspace unavailable';
-    const detail = isAuth
-      ? 'This dashboard opened directly as requested, but the existing Supabase security model only allows authenticated staff sessions to read child data. No login screen or demo fallback is being substituted.'
-      : isDenied
-        ? 'The request reached Supabase, but the existing Data API grants or RLS scope do not permit these records.'
-        : 'The Phase 1 Supabase integration is configured, but this request could not be completed.';
-    $('view').innerHTML = `<section class="card card-pad error-state"><div class="eyebrow">${isAuth ? 'Real data protected' : isDenied ? 'Access denied' : 'Connection unavailable'}</div><h1 class="title">${esc(title)}</h1><p class="intro">${esc(error?.message || error)}</p><div class="callout">${esc(detail)}</div><div class="state-actions"><button class="btn" onclick="TamaharUI.retry()">Retry connection</button>${window.TamaharAuth?.getSession?.() ? '<button class="btn ghost" onclick="TamaharUI.signOut()">Clear saved session</button>' : ''}</div></section>`;
+    if (isAuth) {
+      showLogin('Your session is missing or expired. Sign in again.');
+      return;
+    }
+    setStatus(isDenied ? 'Access denied' : 'Backend access pending');
+    const title = isDenied ? 'Your current access is not permitted' : 'Programme Workspace unavailable';
+    const detail = isDenied
+      ? 'You are signed in, but the existing Tamahar app_metadata scope does not permit these records.'
+      : 'The Phase 1 Supabase integration is configured, but this request could not be completed.';
+    $('view').innerHTML = `<section class="card card-pad error-state"><div class="eyebrow">${isDenied ? 'Access denied' : 'Connection unavailable'}</div><h1 class="title">${esc(title)}</h1><p class="intro">${esc(error?.message || error)}</p><div class="callout">${esc(detail)}</div><div class="state-actions"><button class="btn" onclick="TamaharUI.retry()">Retry connection</button>${window.TamaharAuth?.getSession?.() ? '<button class="btn ghost" onclick="TamaharUI.signOut()">Clear saved session</button>' : ''}</div></section>`;
   }
   function backendBanner() {
     return `<div class="callout" style="margin-bottom:18px"><strong>Phase 2 · read-only Supabase integration.</strong> The original Programme Workspace is connected only to the existing Phase 1 backend. Real records appear when the current Supabase access context is authorized; no demo data is used.</div>`;
@@ -232,6 +238,22 @@
     setProgramme(value) { state.programmeFilter = value; render(); },
     setSearch(value) { state.search = value; render(); },
     retry() { bootstrap(); },
+    async signIn(event) {
+      event?.preventDefault?.();
+      const email = $('auth-email')?.value || '';
+      const password = $('auth-password')?.value || '';
+      showLoading('Signing in…');
+      try {
+        await window.TamaharAuth.signIn(email, password);
+        await bootstrap();
+      } catch (error) {
+        console.error(error);
+        const message = error?.code === 'tamahar_access_not_enabled'
+          ? 'This account is authenticated, but no approved Tamahar role/programme scope has been assigned yet.'
+          : (error?.message || 'Sign-in failed.');
+        showLogin(message);
+      }
+    },
     async signOut() {
       showLoading('Clearing saved session…');
       await window.TamaharAuth?.signOut?.();
@@ -247,7 +269,12 @@
   async function bootstrap() {
     showLoading('Connecting to Phase 1 Supabase…');
     try {
-      if (window.TamaharAuth?.initialize) await window.TamaharAuth.initialize();
+      if (!window.TamaharAuth) throw new Error('Authentication module failed to load.');
+      const session = await window.TamaharAuth.initialize();
+      if (!session) {
+        showLogin();
+        return;
+      }
       const data = await window.TamaharBackend.loadWorkspace();
       state.children = data.children;
       state.availableMonths = data.availableMonths || [];
