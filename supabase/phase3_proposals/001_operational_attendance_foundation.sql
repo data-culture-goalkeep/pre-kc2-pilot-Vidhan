@@ -50,7 +50,7 @@ create or replace function private.phase3_prepare_attendance_entry()
 returns trigger
 language plpgsql
 security definer
-set search_path = pg_catalog, public, private
+set search_path = pg_catalog
 as $phase3$
 declare
   actor_uid uuid := auth.uid();
@@ -138,7 +138,7 @@ create or replace function private.phase3_audit_attendance_entry()
 returns trigger
 language plpgsql
 security definer
-set search_path = pg_catalog, public, private
+set search_path = pg_catalog
 as $$
 begin
   if auth.uid() is null then
