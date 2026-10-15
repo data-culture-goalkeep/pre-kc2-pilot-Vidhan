@@ -128,7 +128,7 @@
       }
       c.attendanceMeta[date] = {
         sourceProgram: row.activity_source_label,
-        baselineDayId: row.baseline_child_attendance_day_id || c.attendanceMeta?.[date]?.baselineDayId || null,
+        baselineExists: !!c.attendanceMeta?.[date]?.baselineExists,
         operationalEntryId: row.attendance_entry_id,
         revision: row.revision,
         operational: true
@@ -144,7 +144,7 @@
       sourceProgram: row.activity_source_label,
       reasonForAbsence: row.reason_for_absence || '',
       notes: row.notes || '',
-      baselineDayId: row.baseline_child_attendance_day_id || null,
+      baselineExists: (c.therapySessions || []).some(x=>x.date===date && x.sourceProgram===row.activity_source_label && !x.operational),
       operationalEntryId: row.attendance_entry_id,
       revision: row.revision,
       operational: true
@@ -158,7 +158,7 @@
     if (!writeEnabled()) return [];
     const [start,end] = monthBounds(isoMonthValue);
     const rows = await fetchAll('operational_attendance_entries', {
-      select:'attendance_entry_id,child_pk,entry_date,activity_type,activity_source_label,attendance_code,reason_for_absence,notes,baseline_child_attendance_day_id,correction_reason,revision,created_by,created_at,updated_by,updated_at',
+      select:'attendance_entry_id,child_pk,entry_date,activity_type,activity_source_label,attendance_code,reason_for_absence,notes,correction_reason,revision,created_by,created_at,updated_by,updated_at',
       and:`(entry_date.gte.${start},entry_date.lte.${end})`
     });
     const byPk = new Map(children.map(c=>[c.childPk,c]));
@@ -194,12 +194,12 @@
       if (!body.correction_reason) throw new Error('A correction reason is required when changing an existing operational entry.');
       rows = await request('operational_attendance_entries', {
         attendance_entry_id:`eq.${input.attendanceEntryId}`,
-        select:'attendance_entry_id,child_pk,entry_date,activity_type,activity_source_label,attendance_code,reason_for_absence,notes,baseline_child_attendance_day_id,correction_reason,revision,created_by,created_at,updated_by,updated_at'
+        select:'attendance_entry_id,child_pk,entry_date,activity_type,activity_source_label,attendance_code,reason_for_absence,notes,correction_reason,revision,created_by,created_at,updated_by,updated_at'
       }, {method:'PATCH', body, prefer:'return=representation'});
     } else {
-      if (input.baselineDayId && !body.correction_reason) throw new Error('A correction reason is required when overriding imported Phase 1 attendance.');
+      if (input.baselineExists && !body.correction_reason) throw new Error('A correction reason is required when overriding imported Phase 1 attendance.');
       rows = await request('operational_attendance_entries', {
-        select:'attendance_entry_id,child_pk,entry_date,activity_type,activity_source_label,attendance_code,reason_for_absence,notes,baseline_child_attendance_day_id,correction_reason,revision,created_by,created_at,updated_by,updated_at'
+        select:'attendance_entry_id,child_pk,entry_date,activity_type,activity_source_label,attendance_code,reason_for_absence,notes,correction_reason,revision,created_by,created_at,updated_by,updated_at'
       }, {
         method:'POST',
         body:{
@@ -210,7 +210,6 @@
           attendance_code:body.attendance_code,
           reason_for_absence:body.reason_for_absence,
           notes:body.notes,
-          baseline_child_attendance_day_id:input.baselineDayId || null,
           correction_reason:body.correction_reason
         },
         prefer:'return=representation'
@@ -233,7 +232,7 @@
     const dayRows=[];
     for (let i=0;i<ids.length;i+=60) {
       const chunk=ids.slice(i,i+60); if (!chunk.length) continue;
-      dayRows.push(...await fetchAll('child_attendance_days', {select:'child_attendance_day_id,child_attendance_month_id,day_of_month,attendance_code', child_attendance_month_id:`in.(${chunk.join(',')})`}));
+      dayRows.push(...await fetchAll('child_attendance_days', {select:'child_attendance_month_id,day_of_month,attendance_code', child_attendance_month_id:`in.(${chunk.join(',')})`}));
     }
     const codesByDate = new Map();
     for (const m of months) {
@@ -254,11 +253,11 @@
       if (!codesByDate.has(date)) codesByDate.set(date,[]); if (code) codesByDate.get(date).push(code);
       if (mainAttendanceLabels.has(m.program_source_label)) {
         if (code) c.attendanceRaw[date]=code;
-        if (code) c.attendanceMeta[date]={sourceProgram:m.program_source_label,baselineDayId:d.child_attendance_day_id||null,operational:false};
+        if (code) c.attendanceMeta[date]={sourceProgram:m.program_source_label,baselineExists:true,operational:false};
         if (code==='P' || code==='A') c.attendance[date]=code;
         if (code==='A' && m.reason_for_absence) c.absences[date]={reason:m.reason_for_absence,followup:'Source reason recorded at monthly-row level'};
       } else if (therapyLabels[m.program_source_label] && code) {
-        const session={date,type:therapyLabels[m.program_source_label],code,attended:code==='P',sourceProgram:m.program_source_label,baselineDayId:d.child_attendance_day_id||null,operational:false};
+        const session={date,type:therapyLabels[m.program_source_label],code,attended:code==='P',sourceProgram:m.program_source_label,baselineExists:true,operational:false};
         c.therapySessions.push(session);
         if (!c.therapy[date] && (code==='P'||code==='A')) c.therapy[date]={type:session.type,attended:session.attended,code};
       }
