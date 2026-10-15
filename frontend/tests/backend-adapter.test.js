@@ -163,6 +163,37 @@ async function testOperationalOverlayPersistsAfterReload() {
   assert.equal(c.operationalEntries['2026-09-01|GC-EI'].attendance_entry_id,'op-1');
 }
 
+async function testTherapyOverlayRetainsBaselinePresence() {
+  const childPk='11111111-1111-4111-8111-111111111111';
+  const children=[{
+    child_pk:childPk,child_id:'CH001',child_name:'Example Child',centre_name:'Centre A',gender:'Female',
+    date_of_birth:'2018-01-01',enrollment_date:'2025-06-01',status:'Active',disability_type:'Example',
+    disability_sub_type:null,severity:'Moderate',current_program_source:'EI',exit_date:null,exit_reason:null,notes:null
+  }];
+  const monthId='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const monthRows=[{child_attendance_month_id:monthId,child_pk:childPk,academic_year:'2026-27',month_label:'Sept',program_source_label:'TH-OT',program_subtype_batch:null,source_status:null,source_present_count:1,source_absent_count:0,source_total_count:1,source_attendance_percentage:100,reason_for_absence:null,source_record_id:'src2'}];
+  const dayRows=[{child_attendance_month_id:monthId,day_of_month:1,attendance_code:'P'}];
+  const operational=[{
+    attendance_entry_id:'op-th',child_pk:childPk,entry_date:'2026-09-01',activity_type:'therapy',
+    activity_source_label:'TH-OT',attendance_code:'A',reason_for_absence:'Synthetic reason',notes:null,
+    correction_reason:'Correct imported therapy',revision:1
+  }];
+  const fetchImpl=async url=>{
+    const u=new URL(url), table=u.pathname.split('/').pop();
+    if(table==='children') return response(children);
+    if(table==='adl_assessments'||table==='development_assessments') return response([]);
+    if(table==='child_attendance_months') return response(u.searchParams.has('academic_year')?monthRows:[{academic_year:'2026-27',month_label:'Sept'}]);
+    if(table==='child_attendance_days') return response(dayRows);
+    if(table==='operational_attendance_entries') return response(operational);
+    throw new Error(`Unexpected table ${table}`);
+  };
+  const api=buildContext({fetchImpl,accessToken:'staff-token',phase3Writes:true});
+  const workspace=await api.loadWorkspace();
+  const session=workspace.children[0].therapySessions.find(x=>x.sourceProgram==='TH-OT');
+  assert.equal(session.operational,true);
+  assert.equal(session.baselineExists,true,'therapy operational overlay must retain baseline presence');
+}
+
 async function testWriteDisabledByDefault() {
   const api=buildContext({fetchImpl:async()=>response([]),accessToken:'staff-token'});
   await assert.rejects(
@@ -265,6 +296,7 @@ async function main() {
   await testBearerTokenAttached();
   await testMappedWorkspace();
   await testOperationalOverlayPersistsAfterReload();
+  await testTherapyOverlayRetainsBaselinePresence();
   await testWriteDisabledByDefault();
   await testInsertAndCorrectionRequests();
   await testBaselineCorrectionAndDuplicateConflict();
