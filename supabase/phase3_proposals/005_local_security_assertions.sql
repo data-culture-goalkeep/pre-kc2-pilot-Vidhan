@@ -239,6 +239,63 @@ select phase3_test.assert_true(
   'Phase 1 source attendance row must remain unchanged'
 );
 
+-- G2. Baseline mismatch, correction-reason reuse, and private audit access denial.
+begin;
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"90000000-0000-0000-0000-000000000001","role":"authenticated","app_metadata":{"tamahar":{"enabled":true,"role":"administrator"}}}',true);
+
+do $phase3$
+begin
+  begin
+    insert into public.operational_attendance_entries (
+      child_pk,entry_date,activity_type,activity_source_label,attendance_code,
+      baseline_child_attendance_day_id,correction_reason
+    ) values (
+      '20000000-0000-0000-0000-000000000002','2026-09-05','programme','GC-FA','A',
+      '40000000-0000-0000-0000-000000000001','Mismatched baseline test'
+    );
+    raise exception 'expected baseline mismatch rejection';
+  exception when raise_exception then
+    if sqlerrm = 'expected baseline mismatch rejection' then raise; end if;
+  end;
+end
+$phase3$;
+
+insert into public.operational_attendance_entries (
+  child_pk,entry_date,activity_type,activity_source_label,attendance_code
+) values ('20000000-0000-0000-0000-000000000001','2026-09-18','programme','GC-EI','P');
+
+update public.operational_attendance_entries
+set attendance_code='A',correction_reason='Correction A'
+where child_pk='20000000-0000-0000-0000-000000000001'
+  and entry_date='2026-09-18' and activity_source_label='GC-EI';
+
+do $phase3$
+begin
+  begin
+    update public.operational_attendance_entries
+    set attendance_code='P',correction_reason='Correction A'
+    where child_pk='20000000-0000-0000-0000-000000000001'
+      and entry_date='2026-09-18' and activity_source_label='GC-EI';
+    raise exception 'expected reused correction reason rejection';
+  exception when raise_exception then
+    if sqlerrm = 'expected reused correction reason rejection' then raise; end if;
+  end;
+end
+$phase3$;
+
+do $phase3$
+begin
+  begin
+    perform count(*) from private.operational_attendance_entry_history;
+    raise exception 'expected private audit access denial';
+  exception when insufficient_privilege then null;
+  end;
+end
+$phase3$;
+rollback;
+
 -- H. Audit persistence test uses committed synthetic transaction, then cleanup.
 begin;
 set local role authenticated;
