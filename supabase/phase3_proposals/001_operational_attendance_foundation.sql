@@ -57,12 +57,49 @@ declare
   baseline_child_pk uuid;
   baseline_entry_date date;
   baseline_source_label text;
+  baseline_match_count integer := 0;
 begin
   if actor_uid is null then
     raise exception 'authenticated actor required';
   end if;
 
+  if new.baseline_child_attendance_day_id is null then
+    select
+      count(*)::integer,
+      (array_agg(d.child_attendance_day_id order by d.child_attendance_day_id))[1]
+    into baseline_match_count, new.baseline_child_attendance_day_id
+    from public.child_attendance_days d
+    join public.child_attendance_months m
+      on m.child_attendance_month_id = d.child_attendance_month_id
+    where m.child_pk = new.child_pk
+      and m.program_source_label = new.activity_source_label
+      and d.attendance_code is not null
+      and btrim(d.attendance_code) <> ''
+      and make_date(
+        case
+          when m.month_label in ('Jun','July','Aug','Sept','Oct','Nov','Dec')
+            then substring(m.academic_year from 1 for 4)::int
+          else substring(m.academic_year from 1 for 4)::int + 1
+        end,
+        case m.month_label
+          when 'Jan' then 1 when 'Feb' then 2 when 'Mar' then 3 when 'Apr' then 4
+          when 'May' then 5 when 'Jun' then 6 when 'July' then 7 when 'Aug' then 8
+          when 'Sept' then 9 when 'Oct' then 10 when 'Nov' then 11 when 'Dec' then 12
+          else null
+        end,
+        d.day_of_month
+      ) = new.entry_date;
+
+    if baseline_match_count > 1 then
+      raise exception 'multiple imported attendance rows match child/date/source';
+    end if;
+  end if;
+
   if new.baseline_child_attendance_day_id is not null then
+    if nullif(btrim(new.correction_reason),'') is null then
+      raise exception 'correction reason is required when overriding imported Phase 1 attendance';
+    end if;
+
     select
       m.child_pk,
       make_date(
@@ -174,14 +211,14 @@ revoke all on public.operational_attendance_entries from public, anon, authentic
 
 grant select (
   attendance_entry_id, child_pk, entry_date, activity_type, activity_source_label,
-  attendance_code, reason_for_absence, notes, baseline_child_attendance_day_id,
+  attendance_code, reason_for_absence, notes,
   correction_reason, revision, created_by, created_at, updated_by, updated_at
 ) on public.operational_attendance_entries to authenticated;
 
 grant insert (
   child_pk, entry_date, activity_type, activity_source_label,
   attendance_code, reason_for_absence, notes,
-  baseline_child_attendance_day_id, correction_reason
+  correction_reason
 ) on public.operational_attendance_entries to authenticated;
 
 grant update (
