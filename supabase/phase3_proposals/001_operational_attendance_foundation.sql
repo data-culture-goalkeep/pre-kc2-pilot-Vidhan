@@ -122,7 +122,7 @@ begin
 
   return new;
 end;
-$;
+$$;
 
 -- Trigger-only privileged validator: it reads internal Phase 1 identity fields
 -- that are deliberately not exposed through authenticated column grants.
