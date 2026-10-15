@@ -42,7 +42,7 @@ One current operational entry per child/date/source stream.
 | attendance_code | text | required; `P`, `A`, `H`, `NS`, or `PwC` |
 | reason_for_absence | text | optional |
 | notes | text | optional |
-| baseline_child_attendance_day_id | uuid | optional FK -> imported child_attendance_days |
+| baseline_child_attendance_day_id | uuid | optional FK -> imported child_attendance_days; inferred server-side and not exposed to browser clients |
 | correction_reason | text | required when overriding a baseline day |
 | revision | integer | starts at 1, increments on update |
 | created_by | uuid | always current `auth.uid()` |
@@ -90,11 +90,11 @@ Initial therapy write streams:
 
 | Role | Programme attendance | Therapy attendance | Audit history |
 |---|---|---|---|
-| administrator | all accessible children | all accessible children | all |
-| management | all accessible children | all accessible children | all |
-| programme_manager | allowed programme streams for children visible under existing RLS | no | matching accessible entries |
-| teacher | programme attendance for children visible through programme/child scope | no | matching accessible entries |
-| therapist | no | therapy attendance for children visible through programme/child scope | matching accessible entries |
+| administrator | all accessible children | all accessible children | private/internal only |
+| management | all accessible children | all accessible children | private/internal only |
+| programme_manager | allowed programme streams for children visible under existing RLS | no | private/internal only |
+| teacher | programme attendance for children visible through programme/child scope | no | private/internal only |
+| therapist | no | therapy attendance for children visible through programme/child scope | private/internal only |
 
 This is intentionally least-privilege. Assessment and master-data write permissions are deferred to later Phase 3 review.
 
@@ -113,11 +113,29 @@ No DELETE policy is proposed.
 
 ## Monthly aggregates
 
-Phase 1 monthly source totals stay immutable.
+Phase 1 monthly source totals stay immutable and remain the values shown in Monthly Work.
 
-Phase 3B will derive an **effective** daily/monthly view by overlaying operational entries on the imported source baseline. Operational monthly totals should be computed from effective daily values rather than independently typed into `child_attendance_months`.
+The Phase 1 model stores source-derived monthly fields separately from daily codes:
+- `source_present_count`;
+- `source_absent_count`;
+- `source_total_count`;
+- `source_attendance_percentage`;
+- `source_pwc_count` where present;
+- validation/QA fields where present.
 
-This foundation does not backfill missing daily values and does not infer daily attendance from migrated monthly totals.
+Phase 1 documentation explicitly preserves `P`, `A`, `H`, `NS`, `PwC`, blanks, and source-calculated totals without defining canonical programme semantics for how every code contributes to present/absent/denominator calculations.
+
+Phase 3B therefore overlays operational entries only in the effective daily/therapy views. It does **not** recalculate or overwrite Monthly Work aggregates.
+
+Before operational monthly reconciliation can be implemented, the programme team must define:
+1. whether `H` contributes to the denominator and/or present/absent counts;
+2. whether `NS` contributes to the denominator and/or present/absent counts;
+3. how `PwC` contributes to present/absent/denominator counts;
+4. whether blank/missing days are excluded or counted;
+5. whether therapy streams use the same rules as programme attendance;
+6. whether corrections should recalculate monthly percentages immediately or only after a month-close/review process.
+
+Until those decisions are approved, source monthly totals remain unchanged and are not inferred from daily operational entries.
 
 ## Staging requirement
 
