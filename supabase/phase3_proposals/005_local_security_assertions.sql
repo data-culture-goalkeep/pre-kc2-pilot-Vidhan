@@ -200,13 +200,40 @@ set local role authenticated;
 select set_config('request.jwt.claims',
   '{"sub":"90000000-0000-0000-0000-000000000001","role":"authenticated","app_metadata":{"tamahar":{"enabled":true,"role":"administrator"}}}',true);
 
+do $phase3$
+begin
+  begin
+    insert into public.operational_attendance_entries (
+      child_pk,entry_date,activity_type,activity_source_label,attendance_code
+    ) values (
+      '20000000-0000-0000-0000-000000000001','2026-09-05','programme','GC-EI','A'
+    );
+    raise exception 'expected baseline correction reason rejection';
+  exception when raise_exception then
+    if sqlerrm = 'expected baseline correction reason rejection' then raise; end if;
+  end;
+end
+$phase3$;
+
 insert into public.operational_attendance_entries (
-  child_pk,entry_date,activity_type,activity_source_label,attendance_code,
-  baseline_child_attendance_day_id,correction_reason
+  child_pk,entry_date,activity_type,activity_source_label,attendance_code,correction_reason
 ) values (
   '20000000-0000-0000-0000-000000000001','2026-09-05','programme','GC-EI','A',
-  '40000000-0000-0000-0000-000000000001','Synthetic baseline correction'
+  'Synthetic baseline correction'
 );
+
+reset role;
+select phase3_test.assert_true(
+  (select baseline_child_attendance_day_id='40000000-0000-0000-0000-000000000001'::uuid
+   from public.operational_attendance_entries
+   where child_pk='20000000-0000-0000-0000-000000000001'
+     and entry_date='2026-09-05'
+     and activity_source_label='GC-EI'),
+  'trigger must infer the matching Phase 1 baseline row'
+);
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"90000000-0000-0000-0000-000000000001","role":"authenticated","app_metadata":{"tamahar":{"enabled":true,"role":"administrator"}}}',true);
 
 do $phase3$
 begin
@@ -254,12 +281,11 @@ begin
       child_pk,entry_date,activity_type,activity_source_label,attendance_code,
       baseline_child_attendance_day_id,correction_reason
     ) values (
-      '20000000-0000-0000-0000-000000000002','2026-09-05','programme','GC-FA','A',
-      '40000000-0000-0000-0000-000000000001','Mismatched baseline test'
+      '20000000-0000-0000-0000-000000000001','2026-09-05','programme','GC-EI','A',
+      '40000000-0000-0000-0000-000000000001','Client-supplied baseline should be denied'
     );
-    raise exception 'expected baseline mismatch rejection';
-  exception when raise_exception then
-    if sqlerrm = 'expected baseline mismatch rejection' then raise; end if;
+    raise exception 'expected baseline column privilege denial';
+  exception when insufficient_privilege then null;
   end;
 end
 $phase3$;
