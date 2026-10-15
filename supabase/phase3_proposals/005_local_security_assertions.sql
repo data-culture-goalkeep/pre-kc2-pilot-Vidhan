@@ -179,7 +179,7 @@ insert into public.operational_attendance_entries (
   '40000000-0000-0000-0000-000000000001','Synthetic baseline correction'
 );
 
-do $$
+do $phase3$
 begin
   begin
     insert into public.operational_attendance_entries (
@@ -188,9 +188,10 @@ begin
     raise exception 'expected GC-MNH rejection';
   exception when insufficient_privilege or check_violation then null;
   end;
-end $;
+end
+$phase3$;
 
-do $
+do $phase3$
 begin
   begin
     insert into public.operational_attendance_entries (
@@ -199,7 +200,8 @@ begin
     raise exception 'expected attendance-code rejection';
   exception when check_violation then null;
   end;
-end $$;
+end
+$phase3$;
 
 select phase3_test.assert_true(
   (select attendance_code='P' and source_record_id='10000000-0000-0000-0000-000000000004'::uuid
