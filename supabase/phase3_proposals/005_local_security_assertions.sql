@@ -203,7 +203,7 @@ begin
 end
 $phase3$;
 
-reset role;
+rollback;
 
 select phase3_test.assert_true(
   (select attendance_code='P' and source_record_id='10000000-0000-0000-0000-000000000004'::uuid
@@ -211,7 +211,6 @@ select phase3_test.assert_true(
    where child_attendance_day_id='40000000-0000-0000-0000-000000000001'),
   'Phase 1 source attendance row must remain unchanged'
 );
-rollback;
 
 -- H. Audit persistence test uses committed synthetic transaction, then cleanup.
 begin;
