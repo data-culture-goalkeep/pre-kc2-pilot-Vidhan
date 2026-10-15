@@ -29,18 +29,32 @@
     if (accessToken) h.Authorization = `Bearer ${accessToken}`;
     return h;
   }
-  async function request(table, params = {}) {
+  async function request(table, params = {}, options = {}) {
     const u = new URL(`${REST}/${table}`);
     for (const [k,v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') u.searchParams.set(k, v);
-    const res = await fetch(u, {headers: await headers()});
+    const h = await headers();
+    if (options.body !== undefined) h['Content-Type'] = 'application/json';
+    if (options.prefer) h.Prefer = options.prefer;
+    const res = await fetch(u, {
+      method: options.method || 'GET',
+      headers: h,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body)
+    });
+    let payload = null;
+    try { payload = await res.json(); } catch {}
     if (!res.ok) {
       let detail = '';
-      try { const j = await res.json(); detail = j.message || j.hint || JSON.stringify(j); } catch { detail = await res.text(); }
-      const accessHint = res.status===401 ? ' Authentication is required or the session is invalid.' : res.status===403 ? ' Data API grants/RLS do not permit this request.' : '';
+      if (payload) detail = payload.message || payload.hint || payload.details || JSON.stringify(payload);
+      if (!detail) { try { detail = await res.text(); } catch {} }
+      const accessHint = res.status===401 ? ' Authentication is required or the session is invalid.'
+        : res.status===403 ? ' Data API grants/RLS do not permit this request.'
+        : res.status===409 ? ' An attendance entry already exists for this child, date and source stream.' : '';
       const err = new Error(`Supabase ${res.status}: ${detail || res.statusText}.${accessHint}`);
-      err.status = res.status; throw err;
+      err.status = res.status;
+      err.code = payload?.code || null;
+      throw err;
     }
-    return res.json();
+    return payload ?? [];
   }
   async function fetchAll(table, params = {}) {
     const out = [];
@@ -76,9 +90,135 @@
       programmeSource:r.current_program_source || '', centre:r.centre_name || '', gender:r.gender || '', dob:r.date_of_birth || '',
       age:ageAt(r.date_of_birth), severity:r.severity || 'Not recorded', enrolled:r.enrollment_date || '',
       moves:[], exit:r.exit_date || '', status:r.status || '', disabilityType:r.disability_type || '', disabilitySubType:r.disability_sub_type || '',
-      attendance:{}, attendanceRaw:{}, absences:{}, therapy:{}, therapySessions:[], goals:[], adl:[], quarterly:[], behaviours:[], home:[], work:[], developmental:[], parentSessions:[],
+      attendance:{}, attendanceRaw:{}, attendanceMeta:{}, absences:{}, therapy:{}, therapySessions:[], operationalEntries:{}, goals:[], adl:[], quarterly:[], behaviours:[], home:[], work:[], developmental:[], parentSessions:[],
       backendAdl:[], backendDevelopment:[], backendAttendanceSummary:null, backendRaw:r
     };
+  }
+  function programmeSourceLabel(programmeSource) {
+    return ({EI:'GC-EI',Nursery:'GC-Nursery',FA:'GC-FA',PV:'GC-PVSW',SW:'GC-PVSW'})[programmeSource] || null;
+  }
+  function writeEnabled() {
+    return cfg.phase3Writes === true;
+  }
+  function assertWriteEnabled() {
+    if (!writeEnabled()) {
+      const err = new Error('Phase 3 writes are disabled in this environment.');
+      err.code = 'phase3_writes_disabled';
+      throw err;
+    }
+  }
+  function monthBounds(isoMonthValue) {
+    const [year,month] = isoMonthValue.split('-').map(Number);
+    const last = new Date(year, month, 0).getDate();
+    return [`${isoMonthValue}-01`, `${isoMonthValue}-${String(last).padStart(2,'0')}`];
+  }
+  function operationalKey(date, sourceLabel) {
+    return `${date}|${sourceLabel}`;
+  }
+  function applyOperationalRow(c, row) {
+    const date = row.entry_date;
+    c.operationalEntries[operationalKey(date,row.activity_source_label)] = row;
+    if (row.activity_type === 'programme') {
+      c.attendanceRaw[date] = row.attendance_code;
+      if (row.attendance_code === 'P' || row.attendance_code === 'A') c.attendance[date] = row.attendance_code;
+      else delete c.attendance[date];
+      delete c.absences[date];
+      if (row.attendance_code === 'A' && row.reason_for_absence) {
+        c.absences[date] = {reason:row.reason_for_absence,followup:'Operational correction'};
+      }
+      c.attendanceMeta[date] = {
+        sourceProgram: row.activity_source_label,
+        baselineDayId: row.baseline_child_attendance_day_id || c.attendanceMeta?.[date]?.baselineDayId || null,
+        operationalEntryId: row.attendance_entry_id,
+        revision: row.revision,
+        operational: true
+      };
+      return;
+    }
+    c.therapySessions = (c.therapySessions || []).filter(x => !(x.date===date && x.sourceProgram===row.activity_source_label));
+    const session = {
+      date,
+      type: therapyLabels[row.activity_source_label] || row.activity_source_label,
+      code: row.attendance_code,
+      attended: row.attendance_code === 'P',
+      sourceProgram: row.activity_source_label,
+      reasonForAbsence: row.reason_for_absence || '',
+      notes: row.notes || '',
+      baselineDayId: row.baseline_child_attendance_day_id || null,
+      operationalEntryId: row.attendance_entry_id,
+      revision: row.revision,
+      operational: true
+    };
+    c.therapySessions.push(session);
+    if (row.attendance_code==='P' || row.attendance_code==='A') {
+      c.therapy[date] = {type:session.type,attended:session.attended,code:session.code,operational:true};
+    }
+  }
+  async function loadOperationalMonth(children, isoMonthValue) {
+    if (!writeEnabled()) return [];
+    const [start,end] = monthBounds(isoMonthValue);
+    const rows = await fetchAll('operational_attendance_entries', {
+      select:'attendance_entry_id,child_pk,entry_date,activity_type,activity_source_label,attendance_code,reason_for_absence,notes,baseline_child_attendance_day_id,correction_reason,revision,created_by,created_at,updated_by,updated_at',
+      and:`(entry_date.gte.${start},entry_date.lte.${end})`
+    });
+    const byPk = new Map(children.map(c=>[c.childPk,c]));
+    for (const row of rows) {
+      const c = byPk.get(row.child_pk);
+      if (c) applyOperationalRow(c,row);
+    }
+    return rows;
+  }
+  async function saveOperationalAttendance(input) {
+    assertWriteEnabled();
+    const allowedCodes = new Set(['P','A','H','NS','PwC']);
+    const allowedTherapy = new Set(Object.keys(therapyLabels));
+    const sourceLabel = input.activitySourceLabel || (input.activityType==='programme' ? programmeSourceLabel(input.programmeSource) : null);
+    if (!input.childPk || !input.entryDate) throw new Error('Child and date are required.');
+    if (!allowedCodes.has(input.attendanceCode)) throw new Error('Choose a valid attendance code.');
+    if (input.activityType === 'programme') {
+      if (!sourceLabel || sourceLabel === 'GC-MNH') throw new Error('Programme attendance is not writable for this source mapping.');
+    } else if (input.activityType === 'therapy') {
+      if (!allowedTherapy.has(sourceLabel)) throw new Error('Choose a supported therapy stream.');
+    } else {
+      throw new Error('Choose programme or therapy attendance.');
+    }
+
+    const body = {
+      attendance_code: input.attendanceCode,
+      reason_for_absence: input.reasonForAbsence?.trim() || null,
+      notes: input.notes?.trim() || null,
+      correction_reason: input.correctionReason?.trim() || null
+    };
+    let rows;
+    if (input.attendanceEntryId) {
+      if (!body.correction_reason) throw new Error('A correction reason is required when changing an existing operational entry.');
+      rows = await request('operational_attendance_entries', {
+        attendance_entry_id:`eq.${input.attendanceEntryId}`,
+        select:'attendance_entry_id,child_pk,entry_date,activity_type,activity_source_label,attendance_code,reason_for_absence,notes,baseline_child_attendance_day_id,correction_reason,revision,created_by,created_at,updated_by,updated_at'
+      }, {method:'PATCH', body, prefer:'return=representation'});
+    } else {
+      if (input.baselineDayId && !body.correction_reason) throw new Error('A correction reason is required when overriding imported Phase 1 attendance.');
+      rows = await request('operational_attendance_entries', {
+        select:'attendance_entry_id,child_pk,entry_date,activity_type,activity_source_label,attendance_code,reason_for_absence,notes,baseline_child_attendance_day_id,correction_reason,revision,created_by,created_at,updated_by,updated_at'
+      }, {
+        method:'POST',
+        body:{
+          child_pk:input.childPk,
+          entry_date:input.entryDate,
+          activity_type:input.activityType,
+          activity_source_label:sourceLabel,
+          attendance_code:body.attendance_code,
+          reason_for_absence:body.reason_for_absence,
+          notes:body.notes,
+          baseline_child_attendance_day_id:input.baselineDayId || null,
+          correction_reason:body.correction_reason
+        },
+        prefer:'return=representation'
+      });
+    }
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    if (!row) throw new Error('The attendance save returned no persisted row.');
+    return row;
   }
   async function loadMonth(children, isoMonthValue) {
     const {academicYear,monthLabel} = sourcePeriod(isoMonthValue);
@@ -86,14 +226,14 @@
       select:'child_attendance_month_id,child_pk,academic_year,month_label,program_source_label,program_subtype_batch,source_status,source_present_count,source_absent_count,source_total_count,source_attendance_percentage,reason_for_absence,source_record_id',
       academic_year:`eq.${academicYear}`, month_label:`eq.${monthLabel}`
     });
-    for (const c of children) { c.attendance={}; c.attendanceRaw={}; c.absences={}; c.therapy={}; c.therapySessions=[]; c.backendAttendanceSummary=null; }
+    for (const c of children) { c.attendance={}; c.attendanceRaw={}; c.attendanceMeta={}; c.absences={}; c.therapy={}; c.therapySessions=[]; c.operationalEntries={}; c.backendAttendanceSummary=null; }
     const monthById = new Map(months.map(x=>[x.child_attendance_month_id,x]));
     const childByPk = new Map(children.map(c=>[c.childPk,c]));
     const ids = months.map(x=>x.child_attendance_month_id);
     const dayRows=[];
     for (let i=0;i<ids.length;i+=60) {
       const chunk=ids.slice(i,i+60); if (!chunk.length) continue;
-      dayRows.push(...await fetchAll('child_attendance_days', {select:'child_attendance_month_id,day_of_month,attendance_code', child_attendance_month_id:`in.(${chunk.join(',')})`}));
+      dayRows.push(...await fetchAll('child_attendance_days', {select:'child_attendance_day_id,child_attendance_month_id,day_of_month,attendance_code', child_attendance_month_id:`in.(${chunk.join(',')})`}));
     }
     const codesByDate = new Map();
     for (const m of months) {
@@ -114,17 +254,19 @@
       if (!codesByDate.has(date)) codesByDate.set(date,[]); if (code) codesByDate.get(date).push(code);
       if (mainAttendanceLabels.has(m.program_source_label)) {
         if (code) c.attendanceRaw[date]=code;
+        if (code) c.attendanceMeta[date]={sourceProgram:m.program_source_label,baselineDayId:d.child_attendance_day_id||null,operational:false};
         if (code==='P' || code==='A') c.attendance[date]=code;
         if (code==='A' && m.reason_for_absence) c.absences[date]={reason:m.reason_for_absence,followup:'Source reason recorded at monthly-row level'};
       } else if (therapyLabels[m.program_source_label] && code) {
-        const session={date,type:therapyLabels[m.program_source_label],code,attended:code==='P',sourceProgram:m.program_source_label};
+        const session={date,type:therapyLabels[m.program_source_label],code,attended:code==='P',sourceProgram:m.program_source_label,baselineDayId:d.child_attendance_day_id||null,operational:false};
         c.therapySessions.push(session);
         if (!c.therapy[date] && (code==='P'||code==='A')) c.therapy[date]={type:session.type,attended:session.attended,code};
       }
     }
+    const operationalRows = await loadOperationalMonth(children, isoMonthValue);
     const holidays={};
     for (const [date,codes] of codesByDate) if (codes.includes('H') && !codes.some(x=>x==='P'||x==='A')) holidays[date]='Source holiday/centre closed';
-    return {holidays, monthRows:months.length, dayRows:dayRows.length, academicYear, monthLabel};
+    return {holidays, monthRows:months.length, dayRows:dayRows.length, operationalRows:operationalRows.length, academicYear, monthLabel};
   }
   async function loadWorkspace() {
     validateConfig();
@@ -143,5 +285,5 @@
     const monthData=await loadMonth(children,selectedMonth);
     return {children,availableMonths,selectedMonth,...monthData};
   }
-  window.TamaharBackend={loadWorkspace,loadMonth,sourcePeriod,isoMonth};
+  window.TamaharBackend={loadWorkspace,loadMonth,sourcePeriod,isoMonth,programmeSourceLabel,saveOperationalAttendance,writeEnabled};
 })();
