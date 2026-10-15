@@ -52,9 +52,45 @@ language plpgsql
 security invoker
 set search_path = pg_catalog, public, private
 as $$
+declare
+  baseline_child_pk uuid;
+  baseline_entry_date date;
+  baseline_source_label text;
 begin
   if auth.uid() is null then
     raise exception 'authenticated actor required';
+  end if;
+
+  if new.baseline_child_attendance_day_id is not null then
+    select
+      m.child_pk,
+      make_date(
+        case
+          when m.month_label in ('Jun','July','Aug','Sept','Oct','Nov','Dec')
+            then substring(m.academic_year from 1 for 4)::int
+          else substring(m.academic_year from 1 for 4)::int + 1
+        end,
+        case m.month_label
+          when 'Jan' then 1 when 'Feb' then 2 when 'Mar' then 3 when 'Apr' then 4
+          when 'May' then 5 when 'Jun' then 6 when 'July' then 7 when 'Aug' then 8
+          when 'Sept' then 9 when 'Oct' then 10 when 'Nov' then 11 when 'Dec' then 12
+          else null
+        end,
+        d.day_of_month
+      ),
+      m.program_source_label
+    into baseline_child_pk, baseline_entry_date, baseline_source_label
+    from public.child_attendance_days d
+    join public.child_attendance_months m
+      on m.child_attendance_month_id = d.child_attendance_month_id
+    where d.child_attendance_day_id = new.baseline_child_attendance_day_id;
+
+    if baseline_child_pk is null
+       or baseline_child_pk is distinct from new.child_pk
+       or baseline_entry_date is distinct from new.entry_date
+       or baseline_source_label is distinct from new.activity_source_label then
+      raise exception 'baseline attendance link does not match child/date/source';
+    end if;
   end if;
 
   if tg_op = 'INSERT' then
@@ -64,6 +100,11 @@ begin
     new.updated_at := now();
     new.revision := 1;
   else
+    if nullif(btrim(new.correction_reason),'') is null
+       or new.correction_reason is not distinct from old.correction_reason then
+      raise exception 'each attendance correction requires a new correction reason';
+    end if;
+
     if new.child_pk is distinct from old.child_pk
        or new.entry_date is distinct from old.entry_date
        or new.activity_type is distinct from old.activity_type
