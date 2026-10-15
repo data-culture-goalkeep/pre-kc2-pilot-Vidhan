@@ -51,13 +51,14 @@ returns trigger
 language plpgsql
 security definer
 set search_path = pg_catalog, public, private
-as $$
+as $phase3$
 declare
+  actor_uid uuid := auth.uid();
   baseline_child_pk uuid;
   baseline_entry_date date;
   baseline_source_label text;
 begin
-  if auth.uid() is null then
+  if actor_uid is null then
     raise exception 'authenticated actor required';
   end if;
 
@@ -94,9 +95,9 @@ begin
   end if;
 
   if tg_op = 'INSERT' then
-    new.created_by := auth.uid();
+    new.created_by := actor_uid;
     new.created_at := now();
-    new.updated_by := auth.uid();
+    new.updated_by := actor_uid;
     new.updated_at := now();
     new.revision := 1;
   else
@@ -115,14 +116,14 @@ begin
 
     new.created_by := old.created_by;
     new.created_at := old.created_at;
-    new.updated_by := auth.uid();
+    new.updated_by := actor_uid;
     new.updated_at := now();
     new.revision := old.revision + 1;
   end if;
 
   return new;
 end;
-$$;
+$phase3$;
 
 -- Trigger-only privileged validator: it reads internal Phase 1 identity fields
 -- that are deliberately not exposed through authenticated column grants.
