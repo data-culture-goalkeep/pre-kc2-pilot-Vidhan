@@ -139,7 +139,10 @@
     $('view').innerHTML = `<section class="card card-pad error-state"><div class="eyebrow">${isDenied ? 'Access denied' : 'Connection unavailable'}</div><h1 class="title">${esc(title)}</h1><p class="intro">${esc(error?.message || error)}</p><div class="callout">${esc(detail)}</div><div class="state-actions"><button class="btn" onclick="TamaharUI.retry()">Retry connection</button>${window.TamaharAuth?.getSession?.() ? '<button class="btn ghost" onclick="TamaharUI.signOut()">Clear saved session</button>' : ''}</div></section>`;
   }
   function backendBanner() {
-    return `<div class="callout" style="margin-bottom:18px"><strong>Phase 2 · read-only Supabase integration.</strong> The original Programme Workspace is connected only to the existing Phase 1 backend. Real records appear when the current Supabase access context is authorized; no demo data is used.</div>`;
+    if (writeMode()) {
+      return '<div class="callout" style="margin-bottom:18px"><strong>Phase 3B · local write validation.</strong> Operational attendance/therapy writes are enabled only in this local test configuration. Imported Phase 1 records remain immutable.</div>';
+    }
+    return '<div class="callout" style="margin-bottom:18px"><strong>Phase 2 · read-only Supabase integration.</strong> The original Programme Workspace is connected only to the existing Phase 1 backend. Real records appear when the current Supabase access context is authorized; no demo data is used.</div>';
   }
   function filters() {
     return `<div class="filters"><label class="field-inline">Month <input type="month" value="${esc(state.month)}" onchange="TamaharUI.setMonth(this.value)"></label><label class="field-inline">Programme <select onchange="TamaharUI.setProgramme(this.value)"><option value="all">All programmes</option>${PROGRAMMES.map((name,i)=>`<option value="${i}" ${String(state.programmeFilter)===String(i)?'selected':''}>${esc(name)}</option>`).join('')}</select></label><label class="field-inline search-field">Search <input type="search" placeholder="Child, ID, centre…" value="${esc(state.search)}" oninput="TamaharUI.setSearch(this.value)"></label></div>`;
