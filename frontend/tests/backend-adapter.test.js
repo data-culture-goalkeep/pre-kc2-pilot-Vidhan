@@ -83,10 +83,10 @@ async function testMappedWorkspace() {
     {child_attendance_month_id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', child_pk:children[0].child_pk, academic_year:'2026-27', month_label:'Sept', program_source_label:'TH-OT', program_subtype_batch:null, source_status:null, source_present_count:1, source_absent_count:0, source_total_count:1, source_attendance_percentage:100, reason_for_absence:null, source_record_id:'src2'}
   ];
   const dayRows = [
-    {child_attendance_day_id:'day-1',child_attendance_month_id:monthRows[0].child_attendance_month_id, day_of_month:1, attendance_code:'P'},
-    {child_attendance_day_id:'day-2',child_attendance_month_id:monthRows[0].child_attendance_month_id, day_of_month:2, attendance_code:'A'},
-    {child_attendance_day_id:'day-3',child_attendance_month_id:monthRows[0].child_attendance_month_id, day_of_month:3, attendance_code:'NS'},
-    {child_attendance_day_id:'day-4',child_attendance_month_id:monthRows[1].child_attendance_month_id, day_of_month:1, attendance_code:'P'}
+    {child_attendance_month_id:monthRows[0].child_attendance_month_id, day_of_month:1, attendance_code:'P'},
+    {child_attendance_month_id:monthRows[0].child_attendance_month_id, day_of_month:2, attendance_code:'A'},
+    {child_attendance_month_id:monthRows[0].child_attendance_month_id, day_of_month:3, attendance_code:'NS'},
+    {child_attendance_month_id:monthRows[1].child_attendance_month_id, day_of_month:1, attendance_code:'P'}
   ];
 
   const fetchImpl = async url => {
@@ -139,11 +139,11 @@ async function testOperationalOverlayPersistsAfterReload() {
   }];
   const monthId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const monthRows=[{child_attendance_month_id:monthId,child_pk:childPk,academic_year:'2026-27',month_label:'Sept',program_source_label:'GC-EI',program_subtype_batch:null,source_status:null,source_present_count:1,source_absent_count:0,source_total_count:1,source_attendance_percentage:100,reason_for_absence:null,source_record_id:'src1'}];
-  const dayRows=[{child_attendance_day_id:'day-1',child_attendance_month_id:monthId,day_of_month:1,attendance_code:'P'}];
+  const dayRows=[{child_attendance_month_id:monthId,day_of_month:1,attendance_code:'P'}];
   const operational=[{
     attendance_entry_id:'op-1',child_pk:childPk,entry_date:'2026-09-01',activity_type:'programme',
     activity_source_label:'GC-EI',attendance_code:'A',reason_for_absence:'Operational illness',notes:null,
-    baseline_child_attendance_day_id:'day-1',correction_reason:'Correct source entry',revision:1
+    baseline_correction_reason:'Correct source entry',revision:1
   }];
   const fetchImpl=async url=>{
     const u=new URL(url), table=u.pathname.split('/').pop();
@@ -193,7 +193,9 @@ async function testInsertAndCorrectionRequests() {
   assert.equal(inserted.attendance_entry_id,'op-new');
   const post=seen.find(x=>x.method==='POST');
   assert.equal(post.headers.Authorization,'Bearer staff-token');
-  assert.equal(JSON.parse(post.body).activity_source_label,'GC-EI');
+  const postBody=JSON.parse(post.body);
+  assert.equal(postBody.activity_source_label,'GC-EI');
+  assert.equal(Object.prototype.hasOwnProperty.call(postBody,'baseline_child_attendance_day_id'),false);
 
   await assert.rejects(
     api.saveOperationalAttendance({
@@ -227,15 +229,15 @@ async function testBaselineCorrectionAndDuplicateConflict() {
   await assert.rejects(
     api.saveOperationalAttendance({
       childPk:'11111111-1111-4111-8111-111111111111',programmeSource:'EI',entryDate:'2026-09-05',
-      activityType:'programme',attendanceCode:'A',baselineDayId:'day-1'
+      activityType:'programme',attendanceCode:'A',baselineExists:true
     }),
     /correction reason is required/
   );
   const row=await api.saveOperationalAttendance({
     childPk:'11111111-1111-4111-8111-111111111111',programmeSource:'EI',entryDate:'2026-09-05',
-    activityType:'programme',attendanceCode:'A',baselineDayId:'day-1',correctionReason:'Correct imported day'
+    activityType:'programme',attendanceCode:'A',baselineExists:true,correctionReason:'Correct imported day'
   });
-  assert.equal(row.baseline_child_attendance_day_id,'day-1');
+  assert.equal(Object.prototype.hasOwnProperty.call(row,'baseline_child_attendance_day_id'),false);
   mode='duplicate';
   await assert.rejects(
     api.saveOperationalAttendance({
