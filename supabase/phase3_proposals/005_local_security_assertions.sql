@@ -203,6 +203,8 @@ begin
 end
 $phase3$;
 
+reset role;
+
 select phase3_test.assert_true(
   (select attendance_code='P' and source_record_id='10000000-0000-0000-0000-000000000004'::uuid
    from public.child_attendance_days
