@@ -23,7 +23,9 @@
     selectedId: null,
     entryDate: null,
     holidays: {},
-    availableMonths: []
+    availableMonths: [],
+    saveKeys: new Set(),
+    writeMessage: ''
   };
 
   function programmeName(index) {
@@ -44,6 +46,31 @@
       const searchMatches = !q || [c.name,c.sourceId,c.centre,c.status,c.programmeSource].some(v => String(v || '').toLowerCase().includes(q));
       return programmeMatches && searchMatches;
     });
+  }
+  function tamaharClaims() {
+    return window.TamaharAuth?.getUser?.()?.app_metadata?.tamahar || {};
+  }
+  function writeMode() {
+    return window.TamaharBackend?.writeEnabled?.() === true;
+  }
+  function canWriteProgramme() {
+    return writeMode() && ['administrator','management','programme_manager','teacher'].includes(String(tamaharClaims().role || ''));
+  }
+  function canWriteTherapy() {
+    return writeMode() && ['administrator','management','therapist'].includes(String(tamaharClaims().role || ''));
+  }
+  function therapyLabel(source) {
+    return ({'TH-OT':'Occupational therapy','TH-VT':'Visual therapy','TH-ST':'Speech therapy','TH-PT':'Physical therapy'})[source] || source;
+  }
+  function codeOptions(selected='') {
+    return ['','P','A','H','NS','PwC'].map(code => `<option value="${esc(code)}" ${code===selected?'selected':''}>${code || 'Choose…'}</option>`).join('');
+  }
+  function programmeWritable(c) {
+    return canWriteProgramme() && !!window.TamaharBackend?.programmeSourceLabel?.(c.programmeSource);
+  }
+  function writeNotice() {
+    if (!writeMode()) return '<div class="callout">Phase 3 writes are disabled in this build. Existing Phase 2 data remains read-only.</div>';
+    return state.writeMessage ? `<div class="callout">${esc(state.writeMessage)}</div>` : '';
   }
   function attendanceStats(c) {
     const x = c.backendAttendanceSummary;
@@ -149,11 +176,19 @@
     const rows = visibleChildren();
     const date = state.entryDate?.startsWith(state.month) ? state.entryDate : `${state.month}-01`;
     const body = rows.map(c => {
-      const code = c.attendanceRaw?.[date] || c.attendance?.[date] || '—';
+      const code = c.attendanceRaw?.[date] || c.attendance?.[date] || '';
+      const meta = c.attendanceMeta?.[date] || {};
       const therapy = (c.therapySessions || []).filter(x => x.date === date);
-      return `<tr><td><button class="text-link" onclick="TamaharUI.openChild(${c.id})">${esc(c.name)}</button></td><td>${esc(programmeName(c.programme))}</td><td>${pill(code, code==='A'?'warn':code==='P'?'':'grey')}</td><td>${therapy.map(x=>`${esc(x.type)} · ${pill(x.code,x.code==='A'?'warn':x.code==='P'?'':'grey')}`).join('<br>') || '—'}</td><td>${esc(c.absences?.[date]?.reason || '—')}</td></tr>`;
+      const programmeEditor = programmeWritable(c)
+        ? `<form class="inline-edit" onsubmit="TamaharUI.saveProgrammeAttendance(event,${c.id},'${date}')"><select name="attendanceCode" required>${codeOptions(code)}</select><input name="reason" placeholder="Absence reason" value="${esc(c.absences?.[date]?.reason || '')}"><input name="correctionReason" placeholder="${meta.operational || meta.baselineDayId ? 'Correction reason required' : 'Correction reason (optional)'}" ${meta.operational || meta.baselineDayId ? 'required' : ''}><button class="btn compact" type="submit">Save</button></form>`
+        : pill(code || '—', code==='A'?'warn':code==='P'?'':'grey');
+      const therapyDisplay = therapy.map(x=>`${esc(x.type)} · ${pill(x.code,x.code==='A'?'warn':x.code==='P'?'':'grey')}`).join('<br>') || '—';
+      const therapyEditor = canWriteTherapy()
+        ? `<button class="btn ghost compact" type="button" onclick="TamaharUI.openTherapyEditor(${c.id},'${date}')">Record therapy</button>`
+        : '';
+      return `<tr><td><button class="text-link" onclick="TamaharUI.openChild(${c.id})">${esc(c.name)}</button></td><td>${esc(programmeName(c.programme))}</td><td>${programmeEditor}</td><td>${therapyDisplay}<div class="cell-actions">${therapyEditor}</div></td><td>${esc(c.absences?.[date]?.reason || '—')}</td></tr>`;
     }).join('');
-    return header('Daily entry','Attendance and therapy','Read-only migrated daily source codes for the selected date.') + filters() + `<section class="card card-pad"><div class="row"><label class="field-inline">Class day <input type="date" min="${state.month}-01" max="${monthDates(state.month).at(-1)}" value="${date}" onchange="TamaharUI.setEntryDate(this.value)"></label><span class="muted">Source codes are displayed unchanged.</span></div><div class="table-wrap"><table><thead><tr><th>Child</th><th>Programme</th><th>Class code</th><th>Therapy on this date</th><th>Source absence reason</th></tr></thead><tbody>${body || '<tr><td colspan="5">No records.</td></tr>'}</tbody></table></div></section>`;
+    return header('Daily entry','Attendance and therapy', writeMode() ? 'Record authorized operational attendance without changing imported Phase 1 source rows.' : 'Read-only migrated daily source codes for the selected date.') + filters() + writeNotice() + `<section class="card card-pad"><div class="row"><label class="field-inline">Class day <input type="date" min="${state.month}-01" max="${monthDates(state.month).at(-1)}" value="${date}" onchange="TamaharUI.setEntryDate(this.value)"></label><span class="muted">Operational corrections overlay the immutable Phase 1 baseline after reload.</span></div><div class="table-wrap"><table><thead><tr><th>Child</th><th>Programme</th><th>Class code / entry</th><th>Therapy on this date</th><th>Absence reason</th></tr></thead><tbody>${body || '<tr><td colspan="5">No records.</td></tr>'}</tbody></table></div></section>`;
   }
 
   function childrenPage() {
@@ -207,8 +242,9 @@
     return `<div class="grid"><section class="card card-pad"><h2 class="section-title">ADL assessments · Phase 1 fields</h2><div class="table-wrap"><table><thead><tr><th>Year</th><th>Goals</th><th>Independent</th><th>Supervision</th><th>Limited</th><th>Extensive</th><th>Dependent</th></tr></thead><tbody>${adl.map(r=>`<tr><td>${esc(r.academic_year)}</td><td>${r.goals_planned??'—'}</td><td>${r.goals_independent_score_4??'—'}</td><td>${r.goals_supervision_score_3??'—'}</td><td>${r.goals_limited_assistance_score_2??'—'}</td><td>${r.goals_extensive_assistance_score_1??'—'}</td><td>${r.goals_fully_dependent_score_0??'—'}</td></tr>`).join('') || '<tr><td colspan="7">No ADL records.</td></tr>'}</tbody></table></div></section><section class="card card-pad"><h2 class="section-title">Development assessments · Phase 1 fields</h2><div class="table-wrap"><table><thead><tr><th>Year</th><th>Term</th><th>Domain</th><th>Planned</th><th>Progressed</th><th>Slightly</th><th>Not progressed</th></tr></thead><tbody>${dev.map(r=>`<tr><td>${esc(r.academic_year)}</td><td>${esc(r.term)}</td><td>${esc(r.domain_type)}</td><td>${r.goals_planned??'—'}</td><td>${r.goals_progressed??'—'}</td><td>${r.goals_slightly_progressed??'—'}</td><td>${r.goals_not_progressed??'—'}</td></tr>`).join('') || '<tr><td colspan="7">No development records.</td></tr>'}</tbody></table></div></section></div><p class="callout">The PM prototype's alternate ADL/development scales are not written to the database because they do not match the approved Phase 1 model.</p>`;
   }
   function childTherapy(c) {
-    const sessions = (c.therapySessions || []).filter(x=>x.date.startsWith(state.month)).sort((a,b)=>a.date.localeCompare(b.date));
-    return `<section class="card card-pad"><h2 class="section-title">Therapy attendance from Phase 1</h2><p class="muted">Derived from TH-OT / TH-PT / TH-ST / TH-VT source rows.</p><div class="table-wrap"><table><thead><tr><th>Date</th><th>Therapy</th><th>Source code</th></tr></thead><tbody>${sessions.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.type)}</td><td>${pill(x.code,x.code==='A'?'warn':x.code==='P'?'':'grey')}</td></tr>`).join('') || '<tr><td colspan="3">No therapy records for this month.</td></tr>'}</tbody></table></div></section>`;
+    const sessions = (c.therapySessions || []).filter(x=>x.date.startsWith(state.month)).sort((a,b)=>a.date.localeCompare(b.date)||a.sourceProgram.localeCompare(b.sourceProgram));
+    const entry = canWriteTherapy() ? `<section class="card card-pad" style="margin-bottom:18px"><h2 class="section-title">Record therapy attendance</h2><form class="write-form" onsubmit="TamaharUI.saveTherapyAttendance(event,${c.id})"><label>Date<input name="entryDate" type="date" min="${state.month}-01" max="${monthDates(state.month).at(-1)}" value="${state.entryDate?.startsWith(state.month)?state.entryDate:state.month+'-01'}" required></label><label>Therapy<select name="sourceLabel" required><option value="">Choose…</option><option value="TH-OT">Occupational therapy</option><option value="TH-PT">Physical therapy</option><option value="TH-ST">Speech therapy</option><option value="TH-VT">Visual therapy</option></select></label><label>Status<select name="attendanceCode" required>${codeOptions('')}</select></label><label>Reason / note<input name="reason" placeholder="Optional absence reason"></label><label>Correction reason<input name="correctionReason" placeholder="Required when correcting an existing or imported entry"></label><button class="btn" type="submit">Save therapy status</button></form></section>` : '';
+    return writeNotice() + entry + `<section class="card card-pad"><h2 class="section-title">Therapy attendance</h2><p class="muted">Phase 1 TH-* rows remain unchanged; local Phase 3 operational entries are overlaid after reload.</p><div class="table-wrap"><table><thead><tr><th>Date</th><th>Therapy</th><th>Code</th><th>Origin</th></tr></thead><tbody>${sessions.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.type)}</td><td>${pill(x.code,x.code==='A'?'warn':x.code==='P'?'':'grey')}</td><td>${x.operational?'Operational':'Phase 1 source'}</td></tr>`).join('') || '<tr><td colspan="4">No therapy records for this month.</td></tr>'}</tbody></table></div></section>`;
   }
   function unsupported(title) {
     return `<section class="card card-pad"><h2 class="section-title">${esc(title)}</h2><p class="muted">This PM prototype feature does not have a directly matching approved Phase 1 persistence structure. It is intentionally not connected rather than inventing a new table or business rule.</p></section>`;
@@ -241,7 +277,7 @@
       state.month = month;
       state.entryDate = `${month}-01`;
       state.holidays = result.holidays || {};
-      setStatus(`Connected · ${state.children.length} Phase 1 child records · read-only`);
+      setStatus(`Connected · ${state.children.length} Phase 1 child records · ${writeMode()?'local Phase 3 writes enabled':'read-only'}`);
       render();
     } catch (error) {
       console.error(error);
@@ -314,6 +350,92 @@
       state.selectedId = null;
       await bootstrap();
     },
+    async saveProgrammeAttendance(event, childId, date) {
+      event?.preventDefault?.();
+      const c = childById(childId);
+      if (!c) return;
+      const form = event.currentTarget;
+      const code = form.elements.attendanceCode.value;
+      const sourceLabel = window.TamaharBackend.programmeSourceLabel(c.programmeSource);
+      const meta = c.attendanceMeta?.[date] || {};
+      const existing = c.operationalEntries?.[`${date}|${sourceLabel}`] || null;
+      const key = `${c.childPk}|${date}|${sourceLabel}`;
+      if (state.saveKeys.has(key)) return;
+      state.saveKeys.add(key);
+      state.writeMessage = 'Saving attendance…';
+      render();
+      try {
+        await window.TamaharBackend.saveOperationalAttendance({
+          childPk:c.childPk,
+          programmeSource:c.programmeSource,
+          entryDate:date,
+          activityType:'programme',
+          activitySourceLabel:sourceLabel,
+          attendanceCode:code,
+          reasonForAbsence:form.elements.reason?.value || '',
+          correctionReason:form.elements.correctionReason?.value || '',
+          baselineDayId:meta.baselineDayId || null,
+          attendanceEntryId:existing?.attendance_entry_id || null
+        });
+        state.writeMessage = `Attendance saved for ${c.name} on ${date}.`;
+        await loadMonth(state.month);
+      } catch (error) {
+        console.error(error);
+        state.writeMessage = error?.message || 'Unable to save attendance.';
+        render();
+      } finally {
+        state.saveKeys.delete(key);
+      }
+    },
+    openTherapyEditor(childId, date) {
+      state.selectedId = Number(childId);
+      state.entryDate = date;
+      state.childTab = 'therapy';
+      state.page = 'child';
+      render();
+      window.scrollTo({top:0,behavior:'smooth'});
+    },
+    async saveTherapyAttendance(event, childId) {
+      event?.preventDefault?.();
+      const c = childById(childId);
+      if (!c) return;
+      const form = event.currentTarget;
+      const date = form.elements.entryDate.value;
+      const sourceLabel = form.elements.sourceLabel.value;
+      const existing = c.operationalEntries?.[`${date}|${sourceLabel}`] || null;
+      const baseline = (c.therapySessions || []).find(x=>x.date===date && x.sourceProgram===sourceLabel && !x.operational);
+      const key = `${c.childPk}|${date}|${sourceLabel}`;
+      if (state.saveKeys.has(key)) return;
+      state.saveKeys.add(key);
+      state.writeMessage = 'Saving therapy attendance…';
+      render();
+      try {
+        await window.TamaharBackend.saveOperationalAttendance({
+          childPk:c.childPk,
+          entryDate:date,
+          activityType:'therapy',
+          activitySourceLabel:sourceLabel,
+          attendanceCode:form.elements.attendanceCode.value,
+          reasonForAbsence:form.elements.reason?.value || '',
+          correctionReason:form.elements.correctionReason?.value || '',
+          baselineDayId:baseline?.baselineDayId || null,
+          attendanceEntryId:existing?.attendance_entry_id || null
+        });
+        state.entryDate = date;
+        state.writeMessage = `${therapyLabel(sourceLabel)} saved for ${c.name} on ${date}.`;
+        await loadMonth(state.month);
+        state.selectedId = Number(childId);
+        state.childTab = 'therapy';
+        state.page = 'child';
+        render();
+      } catch (error) {
+        console.error(error);
+        state.writeMessage = error?.message || 'Unable to save therapy attendance.';
+        render();
+      } finally {
+        state.saveKeys.delete(key);
+      }
+    },
     setEntryDate(value) { state.entryDate = value; render(); },
     setMonth(value) { if (value) loadMonth(value); }
   };
@@ -343,7 +465,7 @@
       state.entryDate = `${state.month}-01`;
       state.holidays = data.holidays || {};
       state.selectedId = state.children[0]?.id || null;
-      setStatus(`Connected · ${state.children.length} Phase 1 child records · read-only`);
+      setStatus(`Connected · ${state.children.length} Phase 1 child records · ${writeMode()?'local Phase 3 writes enabled':'read-only'}`);
       render();
     } catch (error) {
       console.error(error);
