@@ -123,11 +123,12 @@ This foundation does not backfill missing daily values and does not infer daily 
 
 Do not apply this proposal to production.
 
-Preferred environment:
-- an isolated Supabase branch of `pre-kc2-pilot-Vidhan`;
-- data-less by default;
-- schema created from production migration history;
+Approved validation environment:
+- GitHub-hosted ephemeral runner;
+- Supabase local development stack started with the Supabase CLI;
+- schema created from the checked-in Phase 1/2 migrations;
+- Phase 3 proposal applied only to that local database;
 - dedicated synthetic test fixtures only;
-- branch-specific URL and publishable key for a Phase 3 Vercel Preview.
+- no remote Supabase project, production credentials, hosted branch, billing upgrade, or paid resource.
 
-No production child data should be copied into staging for initial security testing.
+A hosted Phase 3 Vercel-to-Supabase staging test is intentionally out of scope under the current free-only constraint. No production child data is used for Phase 3 validation.
