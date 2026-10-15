@@ -356,6 +356,8 @@
       if (!c) return;
       const form = event.currentTarget;
       const code = form.elements.attendanceCode.value;
+      const reason = form.elements.reason?.value || '';
+      const correctionReason = form.elements.correctionReason?.value || '';
       const sourceLabel = window.TamaharBackend.programmeSourceLabel(c.programmeSource);
       const meta = c.attendanceMeta?.[date] || {};
       const existing = c.operationalEntries?.[`${date}|${sourceLabel}`] || null;
@@ -372,8 +374,8 @@
           activityType:'programme',
           activitySourceLabel:sourceLabel,
           attendanceCode:code,
-          reasonForAbsence:form.elements.reason?.value || '',
-          correctionReason:form.elements.correctionReason?.value || '',
+          reasonForAbsence:reason,
+          correctionReason,
           baselineDayId:meta.baselineDayId || null,
           attendanceEntryId:existing?.attendance_entry_id || null
         });
@@ -402,6 +404,9 @@
       const form = event.currentTarget;
       const date = form.elements.entryDate.value;
       const sourceLabel = form.elements.sourceLabel.value;
+      const attendanceCode = form.elements.attendanceCode.value;
+      const reason = form.elements.reason?.value || '';
+      const correctionReason = form.elements.correctionReason?.value || '';
       const existing = c.operationalEntries?.[`${date}|${sourceLabel}`] || null;
       const baseline = (c.therapySessions || []).find(x=>x.date===date && x.sourceProgram===sourceLabel && !x.operational);
       const key = `${c.childPk}|${date}|${sourceLabel}`;
@@ -415,9 +420,9 @@
           entryDate:date,
           activityType:'therapy',
           activitySourceLabel:sourceLabel,
-          attendanceCode:form.elements.attendanceCode.value,
-          reasonForAbsence:form.elements.reason?.value || '',
-          correctionReason:form.elements.correctionReason?.value || '',
+          attendanceCode,
+          reasonForAbsence:reason,
+          correctionReason,
           baselineDayId:baseline?.baselineDayId || null,
           attendanceEntryId:existing?.attendance_entry_id || null
         });
