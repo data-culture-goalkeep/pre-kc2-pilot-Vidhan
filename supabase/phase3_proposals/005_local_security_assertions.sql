@@ -54,7 +54,7 @@ begin
   end;
 end $$;
 
-do $
+do $$
 begin
   begin
     update public.operational_attendance_entries
@@ -68,7 +68,7 @@ begin
     when raise_exception then
       if sqlerrm = 'expected immutable identity rejection' then raise; end if;
   end;
-end $;
+end $$;
 rollback;
 
 -- A2. Management: same broad attendance/therapy authority as administrator.
