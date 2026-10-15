@@ -219,19 +219,10 @@ with check (
   )
 );
 
--- Audit rows are readable only through a still-visible operational entry.
-grant select (
-  audit_id, attendance_entry_id, revision, action, actor_id, changed_at, old_row, new_row
-) on private.operational_attendance_entry_history to authenticated;
-
-create policy tamahar_operational_attendance_history_select
-on private.operational_attendance_entry_history
-for select to authenticated
-using (
-  attendance_entry_id in (
-    select attendance_entry_id
-    from public.operational_attendance_entries
-  )
-);
+-- Detailed history remains internal to the private schema in Phase 3A.
+-- Browser clients receive no direct privilege on this table. If an audit UI is
+-- later approved, expose a purpose-built security-invoker read surface rather
+-- than exposing the private table itself.
+revoke all on private.operational_attendance_entry_history from public, anon, authenticated;
 
 commit;
