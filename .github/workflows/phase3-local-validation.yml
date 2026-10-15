@@ -36,8 +36,19 @@ jobs:
       - name: Start local Supabase
         run: supabase start
 
-      - name: Configure local database URL
-        run: echo "DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres" >> "$GITHUB_ENV"
+      - name: Configure local Supabase environment
+        shell: bash
+        run: |
+          supabase status -o env > /tmp/supabase-local.env
+          set -a
+          source /tmp/supabase-local.env
+          set +a
+          echo "::add-mask::$ANON_KEY"
+          echo "::add-mask::$JWT_SECRET"
+          echo "DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres" >> "$GITHUB_ENV"
+          echo "LOCAL_SUPABASE_URL=$API_URL" >> "$GITHUB_ENV"
+          echo "LOCAL_SUPABASE_ANON_KEY=$ANON_KEY" >> "$GITHUB_ENV"
+          echo "LOCAL_SUPABASE_JWT_SECRET=$JWT_SECRET" >> "$GITHUB_ENV"
 
       - name: Reset local database with Phase 1/2 migrations
         run: supabase db reset --local
@@ -46,10 +57,16 @@ jobs:
         run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/phase3_proposals/001_operational_attendance_foundation.sql
 
       - name: Load synthetic Phase 3 fixtures
-        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/phase3_proposals/004_local_synthetic_fixture.sql
+        run: |
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/phase3_proposals/004_local_synthetic_fixture.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "notify pgrst, 'reload schema';"
+          sleep 2
 
       - name: Run Phase 3 RLS and provenance assertions
         run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/phase3_proposals/005_local_security_assertions.sql
+
+      - name: Run Phase 3 frontend against local Supabase
+        run: node frontend/tests/phase3-local-write-integration.test.js
 
       - name: Exercise staging rollback SQL locally
         run: |
