@@ -1,4 +1,4 @@
-# Phase 3A local validation
+# Phase 3A/3B local validation
 
 Status: **PASS** on GitHub Actions using an ephemeral local Supabase stack and synthetic fixtures only.
 
@@ -35,6 +35,8 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 \
 
 psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -f supabase/phase3_proposals/005_local_security_assertions.sql
+
+node frontend/tests/phase3-local-write-integration.test.js
 
 psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -f supabase/phase3_proposals/003_operational_attendance_rollback.sql
@@ -86,22 +88,19 @@ The local suite verifies:
 - disabled Tamahar user cannot read or write operational rows;
 - GC-MNH writes remain denied;
 - unsupported attendance codes are rejected;
-- baseline correction linkage is validated against the same child/date/source;
+- baseline correction linkage is inferred server-side and validated against the same child/date/source;
+- browser clients cannot read or supply the internal baseline source-row UUID;
 - imported Phase 1 attendance/source lineage remains unchanged;
 - audit history records both INSERT and UPDATE;
 - audit actor equals `auth.uid()`;
 - rollback removes Phase 3 operational tables from the local database;
+- the frontend REST adapter performs programme insert/correction/reload and therapy insert/reload against local Supabase;
+- out-of-scope REST writes are rejected;
 - all existing Phase 2 frontend regression tests still pass.
 
 ## CI result
 
-Workflow: `Phase 3 local Supabase validation`
-
-Successful run:
-
-- Run ID: `38727564795`
-- Head commit tested: `28443628e67fb17390c560febf93e0627e4d1130`
-- Conclusion: **success**
+The current branch is validated by the GitHub Actions workflow `Phase 3 local Supabase validation`. The workflow is intentionally tied to the current commit and should be used as the authoritative result rather than retaining a stale historical run ID in this document.
 
 ## Limitation
 
