@@ -69,6 +69,33 @@ begin
 end $$;
 rollback;
 
+-- A2. Management: same broad attendance/therapy authority as administrator.
+begin;
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"90000000-0000-0000-0000-000000000006","role":"authenticated","app_metadata":{"tamahar":{"enabled":true,"role":"management"}}}',true);
+
+insert into public.operational_attendance_entries (
+  child_pk,entry_date,activity_type,activity_source_label,attendance_code
+) values ('20000000-0000-0000-0000-000000000002','2026-09-10','programme','GC-FA','P');
+
+insert into public.operational_attendance_entries (
+  child_pk,entry_date,activity_type,activity_source_label,attendance_code
+) values ('20000000-0000-0000-0000-000000000002','2026-09-10','therapy','TH-ST','P');
+
+do $phase3$
+begin
+  begin
+    delete from public.operational_attendance_entries
+    where child_pk='20000000-0000-0000-0000-000000000002'
+      and entry_date='2026-09-10';
+    raise exception 'expected delete permission denial';
+  exception when insufficient_privilege then null;
+  end;
+end
+$phase3$;
+rollback;
+
 -- B. EI programme manager: EI allowed; FA and therapy denied.
 begin;
 set local role authenticated;
