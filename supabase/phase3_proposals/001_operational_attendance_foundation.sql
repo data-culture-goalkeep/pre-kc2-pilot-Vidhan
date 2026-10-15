@@ -167,7 +167,11 @@ create trigger phase3_audit_attendance_entry
 after insert or update on public.operational_attendance_entries
 for each row execute function private.phase3_audit_attendance_entry();
 
--- Narrow Data API grants. No DELETE.
+-- Narrow Data API grants. Supabase local/default privileges may expose newly
+-- created public tables broadly, so revoke first and then grant only the
+-- approved columns. No DELETE privilege is granted.
+revoke all on public.operational_attendance_entries from public, anon, authenticated;
+
 grant select (
   attendance_entry_id, child_pk, entry_date, activity_type, activity_source_label,
   attendance_code, reason_for_absence, notes, baseline_child_attendance_day_id,
