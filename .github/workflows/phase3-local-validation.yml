@@ -36,11 +36,8 @@ jobs:
       - name: Start local Supabase
         run: supabase start
 
-      - name: Capture local database URL
-        shell: bash
-        run: |
-          supabase status -o env > /tmp/supabase-status.env
-          grep '^DB_URL=' /tmp/supabase-status.env >> "$GITHUB_ENV"
+      - name: Configure local database URL
+        run: echo "DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres" >> "$GITHUB_ENV"
 
       - name: Reset local database with Phase 1/2 migrations
         run: supabase db reset --local
