@@ -135,6 +135,9 @@
       };
       return;
     }
+    const baselineExists = (c.therapySessions || []).some(
+      x => x.date===date && x.sourceProgram===row.activity_source_label && !x.operational
+    );
     c.therapySessions = (c.therapySessions || []).filter(x => !(x.date===date && x.sourceProgram===row.activity_source_label));
     const session = {
       date,
@@ -144,7 +147,7 @@
       sourceProgram: row.activity_source_label,
       reasonForAbsence: row.reason_for_absence || '',
       notes: row.notes || '',
-      baselineExists: (c.therapySessions || []).some(x=>x.date===date && x.sourceProgram===row.activity_source_label && !x.operational),
+      baselineExists,
       operationalEntryId: row.attendance_entry_id,
       revision: row.revision,
       operational: true
