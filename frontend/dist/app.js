@@ -183,7 +183,7 @@
       const meta = c.attendanceMeta?.[date] || {};
       const therapy = (c.therapySessions || []).filter(x => x.date === date);
       const programmeEditor = programmeWritable(c)
-        ? `<form class="inline-edit" onsubmit="TamaharUI.saveProgrammeAttendance(event,${c.id},'${date}')"><select name="attendanceCode" required>${codeOptions(code)}</select><input name="reason" placeholder="Absence reason" value="${esc(c.absences?.[date]?.reason || '')}"><input name="correctionReason" placeholder="${meta.operational || meta.baselineDayId ? 'Correction reason required' : 'Correction reason (optional)'}" ${meta.operational || meta.baselineDayId ? 'required' : ''}><button class="btn compact" type="submit">Save</button></form>`
+        ? `<form class="inline-edit" onsubmit="TamaharUI.saveProgrammeAttendance(event,${c.id},'${date}')"><select name="attendanceCode" required>${codeOptions(code)}</select><input name="reason" placeholder="Absence reason" value="${esc(c.absences?.[date]?.reason || '')}"><input name="correctionReason" placeholder="${meta.operational || meta.baselineExists ? 'Correction reason required' : 'Correction reason (optional)'}" ${meta.operational || meta.baselineExists ? 'required' : ''}><button class="btn compact" type="submit">Save</button></form>`
         : pill(code || '—', code==='A'?'warn':code==='P'?'':'grey');
       const therapyDisplay = therapy.map(x=>`${esc(x.type)} · ${pill(x.code,x.code==='A'?'warn':x.code==='P'?'':'grey')}`).join('<br>') || '—';
       const therapyEditor = canWriteTherapy()
@@ -379,7 +379,7 @@
           attendanceCode:code,
           reasonForAbsence:reason,
           correctionReason,
-          baselineDayId:meta.baselineDayId || null,
+          baselineExists:!!meta.baselineExists,
           attendanceEntryId:existing?.attendance_entry_id || null
         });
         state.writeMessage = `Attendance saved for ${c.name} on ${date}.`;
@@ -426,7 +426,7 @@
           attendanceCode,
           reasonForAbsence:reason,
           correctionReason,
-          baselineDayId:baseline?.baselineDayId || null,
+          baselineExists:!!baseline,
           attendanceEntryId:existing?.attendance_entry_id || null
         });
         state.entryDate = date;
