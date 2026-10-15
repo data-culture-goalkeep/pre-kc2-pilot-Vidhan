@@ -1,4 +1,5 @@
--- Phase 3A SECURITY TEST PLAN (proposal; run only on isolated staging).
+-- Phase 3A/3B SECURITY TEST PLAN (proposal; run only on local/CI Supabase with synthetic data).
+-- Do not run these cases against production or any remote write-enabled environment.
 -- The test harness should execute each block in a transaction and roll it back.
 
 -- Required fixtures (synthetic only):
