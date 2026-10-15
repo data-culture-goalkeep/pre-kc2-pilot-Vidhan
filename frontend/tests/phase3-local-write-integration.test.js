@@ -71,7 +71,7 @@ async function main() {
 
   const baselineMeta = child.attendanceMeta['2026-09-05'];
   assert.equal(child.attendanceRaw['2026-09-05'],'P');
-  assert.ok(baselineMeta?.baselineDayId, 'baseline source day ID must be mapped');
+  assert.equal(baselineMeta?.baselineExists, true, 'frontend must know a source value exists without receiving its row UUID');
 
   const correction = await admin.saveOperationalAttendance({
     childPk:child.childPk,
@@ -80,7 +80,7 @@ async function main() {
     activityType:'programme',
     attendanceCode:'A',
     reasonForAbsence:'Synthetic local test',
-    baselineDayId:baselineMeta.baselineDayId,
+    baselineExists:true,
     correctionReason:'Synthetic correction of imported baseline'
   });
   assert.equal(correction.attendance_code,'A');
