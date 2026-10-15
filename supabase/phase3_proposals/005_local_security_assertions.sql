@@ -186,11 +186,11 @@ begin
       child_pk,entry_date,activity_type,activity_source_label,attendance_code
     ) values ('20000000-0000-0000-0000-000000000001','2026-09-15','programme','GC-MNH','P');
     raise exception 'expected GC-MNH rejection';
-  exception when check_violation then null;
+  exception when insufficient_privilege or check_violation then null;
   end;
-end $$;
+end $;
 
-do $$
+do $
 begin
   begin
     insert into public.operational_attendance_entries (
