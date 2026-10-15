@@ -236,7 +236,8 @@ select phase3_test.assert_true(
   'exactly two audit rows required for insert + update'
 );
 select phase3_test.assert_true(
-  (select min(actor_id)=max(actor_id) and min(actor_id)='90000000-0000-0000-0000-000000000001'::uuid
+  (select count(distinct actor_id)=1
+          and count(*) filter (where actor_id='90000000-0000-0000-0000-000000000001'::uuid)=count(*)
    from private.operational_attendance_entry_history h
    join public.operational_attendance_entries e using (attendance_entry_id)
    where e.child_pk='20000000-0000-0000-0000-000000000001'
