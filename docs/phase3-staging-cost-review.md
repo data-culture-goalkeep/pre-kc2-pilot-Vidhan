@@ -58,9 +58,17 @@ A third active project therefore is not presently available in this organization
 ### C. Persistent/preview Supabase branch
 Best fit for hosted Phase 3 staging and Vercel Preview integration, but it requires Pro and incurs branch usage. A persistent branch is operationally convenient for staging; an ephemeral preview branch is cheaper if kept only for focused test windows.
 
-## Recommendation
+## Free-only decision
 
-1. Run Phase 3A migrations and RLS tests locally/CI first at USD 0 platform cost.
-2. After those tests pass, create an ephemeral Supabase branch for a short hosted integration window rather than keeping a persistent branch running continuously.
-3. Convert to persistent staging only if ongoing QA justifies the recurring usage.
-4. Never copy production child data into the branch; use synthetic fixtures only.
+The project owner has explicitly required **zero additional Supabase charges**.
+
+Therefore:
+
+1. Do not upgrade the Supabase organization to Pro.
+2. Do not create Supabase branches.
+3. Do not create a third hosted project, paid add-on, or billable resource.
+4. Validate Phase 3A using local Supabase only, with synthetic fixtures.
+5. Skip hosted/Vercel end-to-end write testing unless a future genuinely free isolated hosted environment becomes available.
+6. Keep production completely read-only until a separate rollout approval.
+
+The local/CI validation workflow is the approved staging substitute for Phase 3A under these constraints.
