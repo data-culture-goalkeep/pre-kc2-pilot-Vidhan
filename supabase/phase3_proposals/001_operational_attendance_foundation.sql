@@ -49,7 +49,7 @@ alter table private.operational_attendance_entry_history enable row level securi
 create or replace function private.phase3_prepare_attendance_entry()
 returns trigger
 language plpgsql
-security invoker
+security definer
 set search_path = pg_catalog, public, private
 as $$
 declare
@@ -122,7 +122,12 @@ begin
 
   return new;
 end;
-$$;
+$;
+
+-- Trigger-only privileged validator: it reads internal Phase 1 identity fields
+-- that are deliberately not exposed through authenticated column grants.
+-- It returns no source data and refuses unauthenticated execution.
+revoke all on function private.phase3_prepare_attendance_entry() from public, anon, authenticated;
 
 create trigger phase3_prepare_attendance_entry
 before insert or update on public.operational_attendance_entries
