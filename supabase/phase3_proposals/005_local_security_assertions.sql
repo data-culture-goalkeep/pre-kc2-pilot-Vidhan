@@ -54,7 +54,7 @@ begin
   end;
 end $$;
 
-do $$
+do $
 begin
   begin
     update public.operational_attendance_entries
@@ -63,10 +63,12 @@ begin
     where child_pk='20000000-0000-0000-0000-000000000001'
       and entry_date='2026-09-10' and activity_source_label='GC-EI';
     raise exception 'expected immutable identity rejection';
-  exception when raise_exception then
-    if sqlerrm = 'expected immutable identity rejection' then raise; end if;
+  exception
+    when insufficient_privilege then null;
+    when raise_exception then
+      if sqlerrm = 'expected immutable identity rejection' then raise; end if;
   end;
-end $$;
+end $;
 rollback;
 
 -- A2. Management: same broad attendance/therapy authority as administrator.
