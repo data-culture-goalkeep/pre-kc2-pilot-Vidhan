@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "python3 frontend/scripts/render_runtime_config.py",
+  "outputDirectory": "frontend/dist",
+  "cleanUrls": true
+}
