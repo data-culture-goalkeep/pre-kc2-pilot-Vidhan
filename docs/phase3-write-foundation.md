@@ -1,6 +1,6 @@
-# Phase 3A — Controlled Write Foundation (PROPOSAL ONLY)
+# Phase 3A/3B — Controlled Attendance Foundation
 
-> **Status:** Review artifact. Nothing in this document has been applied to production or any Supabase branch.
+> **Status:** Implemented and deployed. Phase 1 imported rows remain immutable; controlled operational attendance writes are enabled under production RLS.
 
 ## Goals
 
@@ -113,40 +113,29 @@ No DELETE policy is proposed.
 
 ## Monthly aggregates
 
-Phase 1 monthly source totals stay immutable and remain the values shown in Monthly Work.
+Imported Phase 1 monthly source fields remain unchanged for lineage/audit purposes.
 
-The Phase 1 model stores source-derived monthly fields separately from daily codes:
-- `source_present_count`;
-- `source_absent_count`;
-- `source_total_count`;
-- `source_attendance_percentage`;
-- `source_pwc_count` where present;
-- validation/QA fields where present.
+The programme team confirmed the operational calculation rules:
+- `P` counts as present;
+- `PwC` (parent with child) counts as present;
+- `A` counts as absent;
+- `H` (holiday) is excluded from the total;
+- `NS` (not scheduled) is excluded from the total.
 
-Phase 1 documentation explicitly preserves `P`, `A`, `H`, `NS`, `PwC`, blanks, and source-calculated totals without defining canonical programme semantics for how every code contributes to present/absent/denominator calculations.
+The source data also confirms that blank daily values are excluded from the monthly denominator: across all 3,095 imported monthly rows, the source total equals daily `P + PwC + A`.
 
-Phase 3B therefore overlays operational entries only in the effective daily/therapy views. It does **not** recalculate or overwrite Monthly Work aggregates.
+The effective monthly attendance shown by the application is therefore derived from the effective daily programme codes after operational overrides:
 
-Before operational monthly reconciliation can be implemented, the programme team must define:
-1. whether `H` contributes to the denominator and/or present/absent counts;
-2. whether `NS` contributes to the denominator and/or present/absent counts;
-3. how `PwC` contributes to present/absent/denominator counts;
-4. whether blank/missing days are excluded or counted;
-5. whether therapy streams use the same rules as programme attendance;
-6. whether corrections should recalculate monthly percentages immediately or only after a month-close/review process.
+`present = P + PwC`
 
-Until those decisions are approved, source monthly totals remain unchanged and are not inferred from daily operational entries.
+`absent = A`
 
-## Staging requirement
+`total = P + PwC + A`
 
-Do not apply this proposal to production.
+`percentage = 100 * present / total` when `total > 0`
 
-Approved validation environment:
-- GitHub-hosted ephemeral runner;
-- Supabase local development stack started with the Supabase CLI;
-- schema created from the checked-in Phase 1/2 migrations;
-- Phase 3 proposal applied only to that local database;
-- dedicated synthetic test fixtures only;
-- no remote Supabase project, production credentials, hosted branch, billing upgrade, or paid resource.
+Operational corrections recalculate this displayed effective summary after reload. They do not update or overwrite `child_attendance_months` source fields.
 
-A hosted Phase 3 Vercel-to-Supabase staging test is intentionally out of scope under the current free-only constraint. No production child data is used for Phase 3 validation.
+## Validation and rollout
+
+Validation uses GitHub-hosted ephemeral runners, the local Supabase development stack and synthetic fixtures. Production rollout uses the version-controlled migration `20261016083103_operational_attendance_production.sql`, RLS remains enabled, and no service-role credential is exposed to browser code.
