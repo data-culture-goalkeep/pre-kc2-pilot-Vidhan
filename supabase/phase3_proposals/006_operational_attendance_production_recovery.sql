@@ -2,7 +2,14 @@
 -- Safe to apply after real operational entries exist.
 begin;
 
-revoke insert, update on public.operational_attendance_entries from authenticated;
+revoke insert (
+  child_pk, entry_date, activity_type, activity_source_label,
+  attendance_code, reason_for_absence, notes, correction_reason
+) on public.operational_attendance_entries from authenticated;
+
+revoke update (
+  attendance_code, reason_for_absence, notes, correction_reason
+) on public.operational_attendance_entries from authenticated;
 
 drop policy if exists tamahar_operational_attendance_update
   on public.operational_attendance_entries;
