@@ -16,6 +16,7 @@ def run_renderer(**env_overrides: str) -> subprocess.CompletedProcess[str]:
     env.pop("SUPABASE_URL", None)
     env.pop("SUPABASE_PUBLISHABLE_KEY", None)
     env.pop("TAMAHAR_PHASE3_WRITES", None)
+    env.pop("VERCEL_ENV", None)
     env.update(env_overrides)
     if OUTPUT.exists():
         OUTPUT.unlink()
@@ -56,7 +57,7 @@ def test_valid_config_is_rendered() -> None:
     assert "phase3Writes: false" in rendered
 
 
-def test_phase3_writes_only_enable_for_local_supabase() -> None:
+def test_phase3_write_gates() -> None:
     local = run_renderer(
         SUPABASE_URL="http://127.0.0.1:54321",
         SUPABASE_PUBLISHABLE_KEY="sb_publishable_local_test",
@@ -65,15 +66,39 @@ def test_phase3_writes_only_enable_for_local_supabase() -> None:
     assert local.returncode == 0, local.stderr
     assert "phase3Writes: true" in read_output()
 
-    remote = run_renderer(
+    production = run_renderer(
+        SUPABASE_URL="https://fclinhmjjtpfikyqmssz.supabase.co",
+        SUPABASE_PUBLISHABLE_KEY="sb_publishable_ci_test",
+        VERCEL_ENV="production",
+    )
+    assert production.returncode == 0, production.stderr
+    assert "phase3Writes: true" in read_output()
+
+    preview = run_renderer(
+        SUPABASE_URL="https://fclinhmjjtpfikyqmssz.supabase.co",
+        SUPABASE_PUBLISHABLE_KEY="sb_publishable_ci_test",
+        VERCEL_ENV="preview",
+    )
+    assert preview.returncode == 0, preview.stderr
+    assert "phase3Writes: false" in read_output()
+
+    unapproved_production = run_renderer(
         SUPABASE_URL="https://example.supabase.co",
         SUPABASE_PUBLISHABLE_KEY="sb_publishable_ci_test",
-        TAMAHAR_PHASE3_WRITES="1",
+        VERCEL_ENV="production",
     )
-    assert remote.returncode != 0
-    assert "non-local Supabase URL" in (remote.stdout + remote.stderr)
-    assert not OUTPUT.exists()
+    assert unapproved_production.returncode == 0, unapproved_production.stderr
+    assert "phase3Writes: false" in read_output()
 
+    explicit_remote = run_renderer(
+        SUPABASE_URL="https://fclinhmjjtpfikyqmssz.supabase.co",
+        SUPABASE_PUBLISHABLE_KEY="sb_publishable_ci_test",
+        TAMAHAR_PHASE3_WRITES="1",
+        VERCEL_ENV="preview",
+    )
+    assert explicit_remote.returncode != 0
+    assert "permitted only for local Supabase" in (explicit_remote.stdout + explicit_remote.stderr)
+    assert not OUTPUT.exists()
 
 def test_secret_key_is_rejected() -> None:
     secret = "sb_secret_never_expose"
@@ -90,7 +115,7 @@ def test_secret_key_is_rejected() -> None:
 def main() -> None:
     test_missing_config_is_safe()
     test_valid_config_is_rendered()
-    test_phase3_writes_only_enable_for_local_supabase()
+    test_phase3_write_gates()
     test_secret_key_is_rejected()
     if OUTPUT.exists():
         OUTPUT.unlink()
