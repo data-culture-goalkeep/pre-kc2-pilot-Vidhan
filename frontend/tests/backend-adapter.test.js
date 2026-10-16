@@ -79,13 +79,16 @@ async function testMappedWorkspace() {
     goals_not_progressed:1, notes:null, mark_issue:false
   }];
   const monthRows = [
-    {child_attendance_month_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', child_pk:children[0].child_pk, academic_year:'2026-27', month_label:'Sept', program_source_label:'GC-EI', program_subtype_batch:null, source_status:null, source_present_count:1, source_absent_count:1, source_total_count:2, source_attendance_percentage:50, reason_for_absence:'Illness', source_record_id:'src1'},
+    {child_attendance_month_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', child_pk:children[0].child_pk, academic_year:'2026-27', month_label:'Sept', program_source_label:'GC-EI', program_subtype_batch:null, source_status:null, source_present_count:1, source_absent_count:1, source_total_count:3, source_attendance_percentage:50, reason_for_absence:'Illness', source_record_id:'src1'},
     {child_attendance_month_id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', child_pk:children[0].child_pk, academic_year:'2026-27', month_label:'Sept', program_source_label:'TH-OT', program_subtype_batch:null, source_status:null, source_present_count:1, source_absent_count:0, source_total_count:1, source_attendance_percentage:100, reason_for_absence:null, source_record_id:'src2'}
   ];
   const dayRows = [
     {child_attendance_month_id:monthRows[0].child_attendance_month_id, day_of_month:1, attendance_code:'P'},
     {child_attendance_month_id:monthRows[0].child_attendance_month_id, day_of_month:2, attendance_code:'A'},
     {child_attendance_month_id:monthRows[0].child_attendance_month_id, day_of_month:3, attendance_code:'NS'},
+    {child_attendance_month_id:monthRows[0].child_attendance_month_id, day_of_month:4, attendance_code:'PwC'},
+    {child_attendance_month_id:monthRows[0].child_attendance_month_id, day_of_month:5, attendance_code:'H'},
+    {child_attendance_month_id:monthRows[0].child_attendance_month_id, day_of_month:6, attendance_code:null},
     {child_attendance_month_id:monthRows[1].child_attendance_month_id, day_of_month:1, attendance_code:'P'}
   ];
 
@@ -124,11 +127,38 @@ async function testMappedWorkspace() {
   assert.equal(c.absences['2026-09-02'].reason, 'Illness');
   assert.equal(c.therapy['2026-09-01'].type, 'Occupational therapy');
   assert.equal(c.therapy['2026-09-01'].attended, true);
-  assert.equal(c.backendAttendanceSummary.present, 1);
+  assert.equal(c.backendAttendanceSummary.present, 2);
+  assert.equal(c.backendAttendanceSummary.pwc, 1);
   assert.equal(c.backendAttendanceSummary.absent, 1);
-  assert.equal(c.backendAttendanceSummary.total, 2);
+  assert.equal(c.backendAttendanceSummary.holidays, 1);
+  assert.equal(c.backendAttendanceSummary.notScheduled, 1);
+  assert.equal(c.backendAttendanceSummary.total, 3);
+  assert.ok(Math.abs(c.backendAttendanceSummary.percent - (200/3)) < 0.001);
+  assert.equal(c.sourceAttendanceSummary.present, 1);
+  assert.equal(c.sourceAttendanceSummary.absent, 1);
+  assert.equal(c.sourceAttendanceSummary.total, 3);
 }
 
+
+
+async function testConfirmedMonthlyAttendanceRules() {
+  const api=buildContext({fetchImpl:async()=>response([])});
+  const summary=api.summarizeProgrammeCodes({
+    '2026-09-01|GC-EI':'P',
+    '2026-09-02|GC-EI':'PwC',
+    '2026-09-03|GC-EI':'A',
+    '2026-09-04|GC-EI':'H',
+    '2026-09-05|GC-EI':'NS',
+    '2026-09-06|GC-EI':''
+  });
+  assert.equal(summary.present,2);
+  assert.equal(summary.pwc,1);
+  assert.equal(summary.absent,1);
+  assert.equal(summary.total,3);
+  assert.equal(summary.holidays,1);
+  assert.equal(summary.notScheduled,1);
+  assert.ok(Math.abs(summary.percent-(200/3))<0.001);
+}
 
 async function testOperationalOverlayPersistsAfterReload() {
   const childPk='11111111-1111-4111-8111-111111111111';
@@ -161,6 +191,13 @@ async function testOperationalOverlayPersistsAfterReload() {
   assert.equal(c.absences['2026-09-01'].reason,'Operational illness');
   assert.equal(c.attendanceMeta['2026-09-01'].operational,true);
   assert.equal(c.operationalEntries['2026-09-01|GC-EI'].attendance_entry_id,'op-1');
+  assert.equal(c.backendAttendanceSummary.present,0);
+  assert.equal(c.backendAttendanceSummary.absent,1);
+  assert.equal(c.backendAttendanceSummary.total,1);
+  assert.equal(c.backendAttendanceSummary.percent,0);
+  assert.equal(c.sourceAttendanceSummary.present,1);
+  assert.equal(c.sourceAttendanceSummary.absent,0);
+  assert.equal(c.sourceAttendanceSummary.total,1);
 }
 
 async function testTherapyOverlayRetainsBaselinePresence() {
@@ -295,6 +332,7 @@ async function main() {
   await testSecretKeyRejected();
   await testBearerTokenAttached();
   await testMappedWorkspace();
+  await testConfirmedMonthlyAttendanceRules();
   await testOperationalOverlayPersistsAfterReload();
   await testTherapyOverlayRetainsBaselinePresence();
   await testWriteDisabledByDefault();
