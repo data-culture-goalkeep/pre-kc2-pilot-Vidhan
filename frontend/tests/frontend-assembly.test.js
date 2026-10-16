@@ -22,5 +22,9 @@ const appSource = fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.js'), 
 assert.ok(appSource.includes('Forgot password'), 'forgot-password entry point must exist');
 assert.ok(appSource.includes('Set a new password'), 'set-new-password screen must exist');
 assert.ok(appSource.includes('consumeRecoveryCallback'), 'recovery callback must run before normal bootstrap');
+const configSource = fs.readFileSync(path.join(__dirname, '..', 'dist', 'config.js'), 'utf8');
+assert.ok(configSource.includes('phase3Writes: false'), 'phase3 writes must be disabled by default');
+assert.ok(appSource.includes('saveProgrammeAttendance'), 'phase3 write controls must include programme attendance');
+assert.ok(appSource.includes('saveTherapyAttendance'), 'phase3 write controls must include therapy attendance');
 
 console.log('frontend assembly tests passed');

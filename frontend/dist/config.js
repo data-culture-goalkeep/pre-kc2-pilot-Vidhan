@@ -6,5 +6,6 @@ window.TAMAHAR_CONFIG = Object.freeze({
   supabasePublishableKey: '',
   defaultMonth: '2026-09',
   readOnly: true,
+  phase3Writes: false,
   authMode: 'staff-password'
 });
