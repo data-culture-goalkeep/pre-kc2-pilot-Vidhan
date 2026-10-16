@@ -79,7 +79,10 @@
       present:Number(x.present || 0),
       absent:Number(x.absent || 0),
       total:Number(x.total || 0),
-      percent:x.percent == null ? null : Math.round(Number(x.percent))
+      percent:x.percent == null ? null : Math.round(Number(x.percent)),
+      pwc:Number(x.pwc || 0),
+      holidays:Number(x.holidays || 0),
+      notScheduled:Number(x.notScheduled || 0)
     };
   }
   function pill(text, kind='') {
@@ -140,7 +143,7 @@
   }
   function backendBanner() {
     if (writeMode()) {
-      return '<div class="callout" style="margin-bottom:18px"><strong>Phase 3B · local write validation.</strong> Operational attendance/therapy writes are enabled only in this local test configuration. Imported Phase 1 records remain immutable.</div>';
+      return '<div class="callout" style="margin-bottom:18px"><strong>Controlled attendance entry enabled.</strong> Authorized programme and therapy attendance writes are stored separately from the immutable Phase 1 source records.</div>';
     }
     return '<div class="callout" style="margin-bottom:18px"><strong>Phase 2 · read-only Supabase integration.</strong> The original Programme Workspace is connected only to the existing Phase 1 backend. Real records appear when the current Supabase access context is authorized; no demo data is used.</div>';
   }
@@ -170,9 +173,9 @@
     const withAttendance = rows.filter(c => c.backendAttendanceSummary);
     const low = withAttendance.filter(c => attendanceStats(c).percent != null && attendanceStats(c).percent < 80);
     const therapyEntries = rows.reduce((n,c)=>n+(c.therapySessions || []).filter(x=>x.date.startsWith(state.month)).length,0);
-    return header('Programme work', `${new Date(state.month+'-01T12:00:00').toLocaleString('en',{month:'long',year:'numeric'})} work`, 'Review attendance, therapy participation and child records from the existing Phase 1 backend.') + filters() +
-      `<div class="metrics"><div class="card metric-card"><span>Children in view</span><div class="metric">${rows.length}</div><small>Accessible Phase 1 child records</small></div><div class="card metric-card"><span>Attendance rows</span><div class="metric">${withAttendance.length}</div><small>Children with matching monthly source rows</small></div><div class="card metric-card"><span>Below 80%</span><div class="metric">${low.length}</div><small>Using migrated source percentage</small></div><div class="card metric-card"><span>Therapy entries</span><div class="metric">${therapyEntries}</div><small>TH-* daily source codes</small></div></div>` +
-      `<div class="grid"><section class="card card-pad"><h2 class="section-title">Attendance review</h2><p class="muted">Source-calculated attendance values are retained. NS, PwC, H and other source codes are not silently reinterpreted.</p>${PROGRAMMES.map((name,i)=>{const group=rows.filter(c=>c.programme===i), values=group.map(c=>attendanceStats(c).percent).filter(v=>v!=null);const avg=values.length?Math.round(values.reduce((a,b)=>a+b,0)/values.length):0;return bar(name,avg,100,PROGRAMME_COLORS[i])}).join('')}</section><section class="card card-pad"><h2 class="section-title">Children needing review</h2>${childTable(low.slice(0,10))}</section></div>`;
+    return header('Programme work', `${new Date(state.month+'-01T12:00:00').toLocaleString('en',{month:'long',year:'numeric'})} work`, 'Review effective attendance, therapy participation and child records. Imported Phase 1 records remain unchanged.') + filters() +
+      `<div class="metrics"><div class="card metric-card"><span>Children in view</span><div class="metric">${rows.length}</div><small>Accessible Phase 1 child records</small></div><div class="card metric-card"><span>Attendance rows</span><div class="metric">${withAttendance.length}</div><small>Children with matching monthly source rows</small></div><div class="card metric-card"><span>Below 80%</span><div class="metric">${low.length}</div><small>Using effective daily attendance</small></div><div class="card metric-card"><span>Therapy entries</span><div class="metric">${therapyEntries}</div><small>TH-* daily source codes</small></div></div>` +
+      `<div class="grid"><section class="card card-pad"><h2 class="section-title">Attendance review</h2><p class="muted">Monthly attendance is derived from effective daily codes: P and PwC count as present, A counts as absent, and H / NS are excluded from the total. Imported monthly source fields remain unchanged.</p>${PROGRAMMES.map((name,i)=>{const group=rows.filter(c=>c.programme===i), values=group.map(c=>attendanceStats(c).percent).filter(v=>v!=null);const avg=values.length?Math.round(values.reduce((a,b)=>a+b,0)/values.length):0;return bar(name,avg,100,PROGRAMME_COLORS[i])}).join('')}</section><section class="card card-pad"><h2 class="section-title">Children needing review</h2>${childTable(low.slice(0,10))}</section></div>`;
   }
 
   function dailyAttendance() {
@@ -210,7 +213,7 @@
     const groups = PROGRAMMES.map((name,i)=>({name,i,rows:rows.filter(c=>c.programme===i)}));
     return header('Programme review','General info','Read-only comparison of accessible Phase 1 child, attendance and therapy records.') + filters() +
       severityComparison(rows) +
-      `<div class="grid"><section class="card card-pad"><h2 class="section-title">Attendance by programme</h2>${groups.map(g=>{const vals=g.rows.map(c=>attendanceStats(c).percent).filter(v=>v!=null);const avg=vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):0;return bar(g.name,avg,100,PROGRAMME_COLORS[g.i])}).join('')}<p class="notice">Programme bars use source attendance percentages for children with a matching monthly row.</p></section><section class="card card-pad"><h2 class="section-title">Therapy participation</h2>${THERAPIES.map(t=>{const n=rows.filter(c=>(c.therapySessions||[]).some(x=>x.date.startsWith(state.month)&&x.type===t&&x.code==='P')).length;return bar(t,n,Math.max(1,rows.length),'#527a96')}).join('')}<p class="notice">Distinct children with at least one P-coded therapy entry in the selected month.</p></section></div>` +
+      `<div class="grid"><section class="card card-pad"><h2 class="section-title">Attendance by programme</h2>${groups.map(g=>{const vals=g.rows.map(c=>attendanceStats(c).percent).filter(v=>v!=null);const avg=vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):0;return bar(g.name,avg,100,PROGRAMME_COLORS[g.i])}).join('')}<p class="notice">Programme bars use effective daily attendance after operational corrections: (P + PwC) / (P + PwC + A).</p></section><section class="card card-pad"><h2 class="section-title">Therapy participation</h2>${THERAPIES.map(t=>{const n=rows.filter(c=>(c.therapySessions||[]).some(x=>x.date.startsWith(state.month)&&x.type===t&&x.code==='P')).length;return bar(t,n,Math.max(1,rows.length),'#527a96')}).join('')}<p class="notice">Distinct children with at least one P-coded therapy entry in the selected month.</p></section></div>` +
       `<p class="callout">Goal, behaviour, home-guidance and other prototype comparisons are intentionally omitted because they do not have approved Phase 1 persistence structures.</p>`;
   }
 
@@ -231,13 +234,13 @@
   }
   function childOverview(c) {
     const a = attendanceStats(c);
-    return `<div class="grid"><section class="card card-pad"><h2 class="section-title">Child master record</h2><p><strong>Source ID:</strong> ${esc(c.sourceId)}</p><p><strong>Status:</strong> ${esc(c.status || '—')}</p><p><strong>Programme:</strong> ${esc(c.programmeSource || programmeName(c.programme))}</p><p><strong>Centre:</strong> ${esc(c.centre || '—')}</p><p><strong>Disability:</strong> ${esc([c.disabilityType,c.disabilitySubType].filter(Boolean).join(' · ') || '—')}</p><p><strong>Severity:</strong> ${esc(c.severity || '—')}</p></section><section class="card card-pad"><h2 class="section-title">Attendance this month</h2><div class="metric">${a.percent==null?'—':a.percent+'%'}</div><p class="muted">${a.present} present · ${a.absent} absent · source total ${a.total}</p></section><section class="card card-pad"><h2 class="section-title">Assessments</h2><p>${(c.backendAdl||[]).length} ADL record(s)</p><p>${(c.backendDevelopment||[]).length} development record(s)</p></section><section class="card card-pad"><h2 class="section-title">Prototype-only features</h2><p class="muted">Goals, behaviour concerns, home guidance and work-skill entry are retained as navigation references but are not persisted because Phase 1 has no approved matching write tables.</p></section></div>`;
+    return `<div class="grid"><section class="card card-pad"><h2 class="section-title">Child master record</h2><p><strong>Source ID:</strong> ${esc(c.sourceId)}</p><p><strong>Status:</strong> ${esc(c.status || '—')}</p><p><strong>Programme:</strong> ${esc(c.programmeSource || programmeName(c.programme))}</p><p><strong>Centre:</strong> ${esc(c.centre || '—')}</p><p><strong>Disability:</strong> ${esc([c.disabilityType,c.disabilitySubType].filter(Boolean).join(' · ') || '—')}</p><p><strong>Severity:</strong> ${esc(c.severity || '—')}</p></section><section class="card card-pad"><h2 class="section-title">Attendance this month</h2><div class="metric">${a.percent==null?'—':a.percent+'%'}</div><p class="muted">${a.present} present (including ${a.pwc} PwC) · ${a.absent} absent · effective total ${a.total}</p></section><section class="card card-pad"><h2 class="section-title">Assessments</h2><p>${(c.backendAdl||[]).length} ADL record(s)</p><p>${(c.backendDevelopment||[]).length} development record(s)</p></section><section class="card card-pad"><h2 class="section-title">Prototype-only features</h2><p class="muted">Goals, behaviour concerns, home guidance and work-skill entry are retained as navigation references but are not persisted because Phase 1 has no approved matching write tables.</p></section></div>`;
   }
   function childAttendance(c) {
     const dates = monthDates(state.month);
     const first = new Date(`${state.month}-01T12:00:00`).getDay();
     const a = attendanceStats(c);
-    return `<div class="grid"><section class="card card-pad"><h2 class="section-title">${esc(state.month)} attendance</h2><p class="muted">P/A are shown directly; H, NS, PwC and other source values remain unchanged.</p><div class="month-grid">${Array.from({length:first},()=>'<span></span>').join('')}${dates.map((date,i)=>{const raw=c.attendanceRaw?.[date]||c.attendance?.[date]||'';return `<div class="day ${raw?'':'off'}"><strong>${i+1}</strong><small>${raw?pill(raw,raw==='A'?'warn':raw==='P'?'':'grey'):'—'}</small></div>`}).join('')}</div><p><strong>${a.percent==null?'Monthly percentage unavailable':a.percent+'%'}</strong> · ${a.present} present · ${a.absent} absent · source total ${a.total}</p></section><section class="card card-pad"><h2 class="section-title">Absence reasons</h2><div class="list">${dates.filter(d=>c.attendance?.[d]==='A').map(d=>`<div class="item"><strong>${esc(d)}</strong><small>${esc(c.absences?.[d]?.reason || 'No source reason recorded')}</small></div>`).join('') || '<p class="muted">No P/A-coded absences for this month.</p>'}</div></section></div>`;
+    return `<div class="grid"><section class="card card-pad"><h2 class="section-title">${esc(state.month)} attendance</h2><p class="muted">P and PwC count as present; A counts as absent; H and NS are excluded from the monthly total. Daily source codes remain visible unchanged.</p><div class="month-grid">${Array.from({length:first},()=>'<span></span>').join('')}${dates.map((date,i)=>{const raw=c.attendanceRaw?.[date]||c.attendance?.[date]||'';return `<div class="day ${raw?'':'off'}"><strong>${i+1}</strong><small>${raw?pill(raw,raw==='A'?'warn':raw==='P'?'':'grey'):'—'}</small></div>`}).join('')}</div><p><strong>${a.percent==null?'Monthly percentage unavailable':a.percent+'%'}</strong> · ${a.present} present (including ${a.pwc} PwC) · ${a.absent} absent · effective total ${a.total}</p></section><section class="card card-pad"><h2 class="section-title">Absence reasons</h2><div class="list">${dates.filter(d=>c.attendance?.[d]==='A').map(d=>`<div class="item"><strong>${esc(d)}</strong><small>${esc(c.absences?.[d]?.reason || 'No source reason recorded')}</small></div>`).join('') || '<p class="muted">No P/A-coded absences for this month.</p>'}</div></section></div>`;
   }
   function childAssessments(c) {
     const adl = c.backendAdl || [];
@@ -247,7 +250,7 @@
   function childTherapy(c) {
     const sessions = (c.therapySessions || []).filter(x=>x.date.startsWith(state.month)).sort((a,b)=>a.date.localeCompare(b.date)||a.sourceProgram.localeCompare(b.sourceProgram));
     const entry = canWriteTherapy() ? `<section class="card card-pad" style="margin-bottom:18px"><h2 class="section-title">Record therapy attendance</h2><form class="write-form" onsubmit="TamaharUI.saveTherapyAttendance(event,${c.id})"><label>Date<input name="entryDate" type="date" min="${state.month}-01" max="${monthDates(state.month).at(-1)}" value="${state.entryDate?.startsWith(state.month)?state.entryDate:state.month+'-01'}" required></label><label>Therapy<select name="sourceLabel" required><option value="">Choose…</option><option value="TH-OT">Occupational therapy</option><option value="TH-PT">Physical therapy</option><option value="TH-ST">Speech therapy</option><option value="TH-VT">Visual therapy</option></select></label><label>Status<select name="attendanceCode" required>${codeOptions('')}</select></label><label>Reason / note<input name="reason" placeholder="Optional absence reason"></label><label>Correction reason<input name="correctionReason" placeholder="Required when correcting an existing or imported entry"></label><button class="btn" type="submit">Save therapy status</button></form></section>` : '';
-    return writeNotice() + entry + `<section class="card card-pad"><h2 class="section-title">Therapy attendance</h2><p class="muted">Phase 1 TH-* rows remain unchanged; local Phase 3 operational entries are overlaid after reload.</p><div class="table-wrap"><table><thead><tr><th>Date</th><th>Therapy</th><th>Code</th><th>Origin</th></tr></thead><tbody>${sessions.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.type)}</td><td>${pill(x.code,x.code==='A'?'warn':x.code==='P'?'':'grey')}</td><td>${x.operational?'Operational':'Phase 1 source'}</td></tr>`).join('') || '<tr><td colspan="4">No therapy records for this month.</td></tr>'}</tbody></table></div></section>`;
+    return writeNotice() + entry + `<section class="card card-pad"><h2 class="section-title">Therapy attendance</h2><p class="muted">Phase 1 TH-* rows remain unchanged; operational entries are overlaid after reload.</p><div class="table-wrap"><table><thead><tr><th>Date</th><th>Therapy</th><th>Code</th><th>Origin</th></tr></thead><tbody>${sessions.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.type)}</td><td>${pill(x.code,x.code==='A'?'warn':x.code==='P'?'':'grey')}</td><td>${x.operational?'Operational':'Phase 1 source'}</td></tr>`).join('') || '<tr><td colspan="4">No therapy records for this month.</td></tr>'}</tbody></table></div></section>`;
   }
   function unsupported(title) {
     return `<section class="card card-pad"><h2 class="section-title">${esc(title)}</h2><p class="muted">This PM prototype feature does not have a directly matching approved Phase 1 persistence structure. It is intentionally not connected rather than inventing a new table or business rule.</p></section>`;
@@ -280,7 +283,7 @@
       state.month = month;
       state.entryDate = `${month}-01`;
       state.holidays = result.holidays || {};
-      setStatus(`Connected · ${state.children.length} Phase 1 child records · ${writeMode()?'local Phase 3 writes enabled':'read-only'}`);
+      setStatus(`Connected · ${state.children.length} Phase 1 child records · ${writeMode()?'controlled attendance writes enabled':'read-only'}`);
       render();
     } catch (error) {
       console.error(error);
@@ -473,7 +476,7 @@
       state.entryDate = `${state.month}-01`;
       state.holidays = data.holidays || {};
       state.selectedId = state.children[0]?.id || null;
-      setStatus(`Connected · ${state.children.length} Phase 1 child records · ${writeMode()?'local Phase 3 writes enabled':'read-only'}`);
+      setStatus(`Connected · ${state.children.length} Phase 1 child records · ${writeMode()?'controlled attendance writes enabled':'read-only'}`);
       render();
     } catch (error) {
       console.error(error);

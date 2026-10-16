@@ -90,8 +90,8 @@
       programmeSource:r.current_program_source || '', centre:r.centre_name || '', gender:r.gender || '', dob:r.date_of_birth || '',
       age:ageAt(r.date_of_birth), severity:r.severity || 'Not recorded', enrolled:r.enrollment_date || '',
       moves:[], exit:r.exit_date || '', status:r.status || '', disabilityType:r.disability_type || '', disabilitySubType:r.disability_sub_type || '',
-      attendance:{}, attendanceRaw:{}, attendanceMeta:{}, absences:{}, therapy:{}, therapySessions:[], operationalEntries:{}, goals:[], adl:[], quarterly:[], behaviours:[], home:[], work:[], developmental:[], parentSessions:[],
-      backendAdl:[], backendDevelopment:[], backendAttendanceSummary:null, backendRaw:r
+      attendance:{}, attendanceRaw:{}, attendanceMeta:{}, programmeAttendanceByKey:{}, absences:{}, therapy:{}, therapySessions:[], operationalEntries:{}, goals:[], adl:[], quarterly:[], behaviours:[], home:[], work:[], developmental:[], parentSessions:[],
+      backendAdl:[], backendDevelopment:[], backendAttendanceSummary:null, sourceAttendanceSummary:null, backendRaw:r
     };
   }
   function programmeSourceLabel(programmeSource) {
@@ -115,11 +115,47 @@
   function operationalKey(date, sourceLabel) {
     return `${date}|${sourceLabel}`;
   }
+  function summarizeProgrammeCodes(programmeAttendanceByKey) {
+    let present = 0;
+    let absent = 0;
+    let total = 0;
+    let pwc = 0;
+    let holidays = 0;
+    let notScheduled = 0;
+    for (const code of Object.values(programmeAttendanceByKey || {})) {
+      if (code === 'P') {
+        present += 1;
+        total += 1;
+      } else if (code === 'PwC') {
+        present += 1;
+        pwc += 1;
+        total += 1;
+      } else if (code === 'A') {
+        absent += 1;
+        total += 1;
+      } else if (code === 'H') {
+        holidays += 1;
+      } else if (code === 'NS') {
+        notScheduled += 1;
+      }
+    }
+    return {
+      present,
+      absent,
+      total,
+      pwc,
+      holidays,
+      notScheduled,
+      percent: total ? 100 * present / total : null,
+      rule: 'P + PwC present; A absent; H/NS/blanks excluded'
+    };
+  }
   function applyOperationalRow(c, row) {
     const date = row.entry_date;
     c.operationalEntries[operationalKey(date,row.activity_source_label)] = row;
     if (row.activity_type === 'programme') {
       c.attendanceRaw[date] = row.attendance_code;
+      c.programmeAttendanceByKey[operationalKey(date,row.activity_source_label)] = row.attendance_code;
       if (row.attendance_code === 'P' || row.attendance_code === 'A') c.attendance[date] = row.attendance_code;
       else delete c.attendance[date];
       delete c.absences[date];
@@ -228,7 +264,7 @@
       select:'child_attendance_month_id,child_pk,academic_year,month_label,program_source_label,program_subtype_batch,source_status,source_present_count,source_absent_count,source_total_count,source_attendance_percentage,reason_for_absence,source_record_id',
       academic_year:`eq.${academicYear}`, month_label:`eq.${monthLabel}`
     });
-    for (const c of children) { c.attendance={}; c.attendanceRaw={}; c.attendanceMeta={}; c.absences={}; c.therapy={}; c.therapySessions=[]; c.operationalEntries={}; c.backendAttendanceSummary=null; }
+    for (const c of children) { c.attendance={}; c.attendanceRaw={}; c.attendanceMeta={}; c.programmeAttendanceByKey={}; c.absences={}; c.therapy={}; c.therapySessions=[]; c.operationalEntries={}; c.backendAttendanceSummary=null; c.sourceAttendanceSummary=null; }
     const monthById = new Map(months.map(x=>[x.child_attendance_month_id,x]));
     const childByPk = new Map(children.map(c=>[c.childPk,c]));
     const ids = months.map(x=>x.child_attendance_month_id);
@@ -241,11 +277,14 @@
     for (const m of months) {
       const c = childByPk.get(m.child_pk); if (!c) continue;
       if (mainAttendanceLabels.has(m.program_source_label)) {
-        const prev=c.backendAttendanceSummary||{present:0,absent:0,total:0,sourcePrograms:[],rawRows:[]};
-        prev.present+=Number(m.source_present_count||0); prev.absent+=Number(m.source_absent_count||0); prev.total+=Number(m.source_total_count||0);
-        if(!prev.sourcePrograms.includes(m.program_source_label))prev.sourcePrograms.push(m.program_source_label); prev.rawRows.push(m);
-        prev.percent=prev.total?100*prev.present/prev.total:(m.source_attendance_percentage===null?null:Number(m.source_attendance_percentage));
-        c.backendAttendanceSummary=prev;
+        const prev=c.sourceAttendanceSummary||{present:0,absent:0,total:0,sourcePrograms:[],rawRows:[]};
+        prev.present+=Number(m.source_present_count||0);
+        prev.absent+=Number(m.source_absent_count||0);
+        prev.total+=Number(m.source_total_count||0);
+        if(!prev.sourcePrograms.includes(m.program_source_label))prev.sourcePrograms.push(m.program_source_label);
+        prev.rawRows.push(m);
+        prev.percent=m.source_attendance_percentage===null?null:Number(m.source_attendance_percentage);
+        c.sourceAttendanceSummary=prev;
       }
     }
     for (const d of dayRows) {
@@ -256,6 +295,7 @@
       if (!codesByDate.has(date)) codesByDate.set(date,[]); if (code) codesByDate.get(date).push(code);
       if (mainAttendanceLabels.has(m.program_source_label)) {
         if (code) c.attendanceRaw[date]=code;
+        if (code) c.programmeAttendanceByKey[operationalKey(date,m.program_source_label)]=code;
         if (code) c.attendanceMeta[date]={sourceProgram:m.program_source_label,baselineExists:true,operational:false};
         if (code==='P' || code==='A') c.attendance[date]=code;
         if (code==='A' && m.reason_for_absence) c.absences[date]={reason:m.reason_for_absence,followup:'Source reason recorded at monthly-row level'};
@@ -266,6 +306,16 @@
       }
     }
     const operationalRows = await loadOperationalMonth(children, isoMonthValue);
+    for (const c of children) {
+      const effective = summarizeProgrammeCodes(c.programmeAttendanceByKey);
+      const source = c.sourceAttendanceSummary;
+      c.backendAttendanceSummary = {
+        ...effective,
+        sourcePrograms: source?.sourcePrograms || [],
+        rawRows: source?.rawRows || [],
+        source
+      };
+    }
     const holidays={};
     for (const [date,codes] of codesByDate) if (codes.includes('H') && !codes.some(x=>x==='P'||x==='A')) holidays[date]='Source holiday/centre closed';
     return {holidays, monthRows:months.length, dayRows:dayRows.length, operationalRows:operationalRows.length, academicYear, monthLabel};
@@ -287,5 +337,5 @@
     const monthData=await loadMonth(children,selectedMonth);
     return {children,availableMonths,selectedMonth,...monthData};
   }
-  window.TamaharBackend={loadWorkspace,loadMonth,sourcePeriod,isoMonth,programmeSourceLabel,saveOperationalAttendance,writeEnabled};
+  window.TamaharBackend={loadWorkspace,loadMonth,sourcePeriod,isoMonth,programmeSourceLabel,saveOperationalAttendance,writeEnabled,summarizeProgrammeCodes};
 })();
