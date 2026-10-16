@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - phase3/write-foundation
+      - phase2/frontend-integration
+      - main
     paths:
       - "supabase/**"
       - "frontend/**"
@@ -53,8 +55,10 @@ jobs:
       - name: Reset local database with Phase 1/2 migrations
         run: supabase db reset --local
 
-      - name: Apply Phase 3A proposal locally only
-        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/phase3_proposals/001_operational_attendance_foundation.sql
+      - name: Verify production attendance migration applied by local reset
+        run: |
+          test "$(psql "$DB_URL" -Atc "select to_regclass('public.operational_attendance_entries') is not null")" = "t"
+          test "$(psql "$DB_URL" -Atc "select to_regclass('private.operational_attendance_entry_history') is not null")" = "t"
 
       - name: Load synthetic Phase 3 fixtures
         run: |
@@ -68,7 +72,15 @@ jobs:
       - name: Run Phase 3 frontend against local Supabase
         run: node frontend/tests/phase3-local-write-integration.test.js
 
-      - name: Exercise staging rollback SQL locally
+      - name: Exercise non-destructive production recovery locally
+        run: |
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/phase3_proposals/006_operational_attendance_production_recovery.sql
+          test "$(psql "$DB_URL" -Atc "select has_column_privilege('authenticated','public.operational_attendance_entries','attendance_code','UPDATE')")" = "f"
+          test "$(psql "$DB_URL" -Atc "select has_column_privilege('authenticated','public.operational_attendance_entries','child_pk','INSERT')")" = "f"
+          test "$(psql "$DB_URL" -Atc "select count(*)=0 from pg_policies where schemaname='public' and tablename='operational_attendance_entries' and cmd in ('INSERT','UPDATE')")" = "t"
+          test "$(psql "$DB_URL" -Atc "select to_regclass('private.operational_attendance_entry_history') is not null")" = "t"
+
+      - name: Exercise local destructive rollback SQL
         run: |
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/phase3_proposals/003_operational_attendance_rollback.sql
           test "$(psql "$DB_URL" -Atc "select to_regclass('public.operational_attendance_entries') is null")" = "t"
