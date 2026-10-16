@@ -42,8 +42,10 @@ missing = [
 ]
 
 local_supabase = url.startswith("http://127.0.0.1:") or url.startswith("http://localhost:")
-if phase3_writes_requested and url and not local_supabase:
-    raise SystemExit("Refusing to enable Phase 3 browser writes for a non-local Supabase URL")
+approved_production_supabase = url == "https://fclinhmjjtpfikyqmssz.supabase.co"
+phase3_write_target_allowed = local_supabase or approved_production_supabase
+if phase3_writes_requested and url and not phase3_write_target_allowed:
+    raise SystemExit("Refusing to enable Phase 3 browser writes for an unapproved Supabase URL")
 
 if missing:
     # A missing public-client setting must not make a static Preview undeployable.
@@ -63,7 +65,7 @@ payload = (
     "  ...window.TAMAHAR_CONFIG,\n"
     f"  supabaseUrl: {json.dumps(url)},\n"
     f"  supabasePublishableKey: {json.dumps(key)},\n"
-    f"  phase3Writes: {json.dumps(bool(phase3_writes_requested and local_supabase))}\n"
+    f"  phase3Writes: {json.dumps(bool(phase3_writes_requested and phase3_write_target_allowed))}\n"
     "});\n"
 )
 
