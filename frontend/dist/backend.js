@@ -261,7 +261,7 @@
   async function loadMonth(children, isoMonthValue) {
     const {academicYear,monthLabel} = sourcePeriod(isoMonthValue);
     const months = await fetchAll('child_attendance_months', {
-      select:'child_attendance_month_id,child_pk,academic_year,month_label,program_source_label,program_subtype_batch,source_status,source_present_count,source_pwc_count,source_absent_count,source_total_count,source_attendance_percentage,reason_for_absence,source_record_id',
+      select:'child_attendance_month_id,child_pk,academic_year,month_label,program_source_label,program_subtype_batch,source_status,source_present_count,source_absent_count,source_total_count,source_attendance_percentage,reason_for_absence,source_record_id',
       academic_year:`eq.${academicYear}`, month_label:`eq.${monthLabel}`
     });
     for (const c of children) { c.attendance={}; c.attendanceRaw={}; c.attendanceMeta={}; c.programmeAttendanceByKey={}; c.absences={}; c.therapy={}; c.therapySessions=[]; c.operationalEntries={}; c.backendAttendanceSummary=null; c.sourceAttendanceSummary=null; }
@@ -277,14 +277,13 @@
     for (const m of months) {
       const c = childByPk.get(m.child_pk); if (!c) continue;
       if (mainAttendanceLabels.has(m.program_source_label)) {
-        const prev=c.sourceAttendanceSummary||{present:0,pwc:0,absent:0,total:0,sourcePrograms:[],rawRows:[]};
+        const prev=c.sourceAttendanceSummary||{present:0,absent:0,total:0,sourcePrograms:[],rawRows:[]};
         prev.present+=Number(m.source_present_count||0);
-        prev.pwc+=Number(m.source_pwc_count||0);
         prev.absent+=Number(m.source_absent_count||0);
         prev.total+=Number(m.source_total_count||0);
         if(!prev.sourcePrograms.includes(m.program_source_label))prev.sourcePrograms.push(m.program_source_label);
         prev.rawRows.push(m);
-        prev.percent=prev.total?100*(prev.present+prev.pwc)/prev.total:(m.source_attendance_percentage===null?null:Number(m.source_attendance_percentage));
+        prev.percent=m.source_attendance_percentage===null?null:Number(m.source_attendance_percentage);
         c.sourceAttendanceSummary=prev;
       }
     }
