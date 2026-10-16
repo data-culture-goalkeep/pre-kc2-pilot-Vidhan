@@ -122,7 +122,7 @@ The programme team confirmed the operational calculation rules:
 - `H` (holiday) is excluded from the total;
 - `NS` (not scheduled) is excluded from the total.
 
-The source data also confirms that blank daily values are excluded from the monthly denominator: across all 3,095 imported monthly rows, the source total equals daily `P + PwC + A`.
+The source data confirms that blank daily values are excluded from the monthly denominator where a source monthly total is recorded: all 3,094 rows with a non-null `source_total_count` equal daily `P + PwC + A`. One imported GC-PVSW row for Aug 2025-26 has null source monthly totals and is preserved unchanged as a source-data anomaly.
 
 The effective monthly attendance shown by the application is therefore derived from the effective daily programme codes after operational overrides:
 
