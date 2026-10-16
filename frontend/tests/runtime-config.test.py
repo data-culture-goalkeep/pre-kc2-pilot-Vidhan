@@ -56,7 +56,7 @@ def test_valid_config_is_rendered() -> None:
     assert "phase3Writes: false" in rendered
 
 
-def test_phase3_writes_only_enable_for_local_supabase() -> None:
+def test_phase3_writes_only_enable_for_approved_targets() -> None:
     local = run_renderer(
         SUPABASE_URL="http://127.0.0.1:54321",
         SUPABASE_PUBLISHABLE_KEY="sb_publishable_local_test",
@@ -65,13 +65,21 @@ def test_phase3_writes_only_enable_for_local_supabase() -> None:
     assert local.returncode == 0, local.stderr
     assert "phase3Writes: true" in read_output()
 
-    remote = run_renderer(
+    production = run_renderer(
+        SUPABASE_URL="https://fclinhmjjtpfikyqmssz.supabase.co",
+        SUPABASE_PUBLISHABLE_KEY="sb_publishable_ci_test",
+        TAMAHAR_PHASE3_WRITES="1",
+    )
+    assert production.returncode == 0, production.stderr
+    assert "phase3Writes: true" in read_output()
+
+    unapproved = run_renderer(
         SUPABASE_URL="https://example.supabase.co",
         SUPABASE_PUBLISHABLE_KEY="sb_publishable_ci_test",
         TAMAHAR_PHASE3_WRITES="1",
     )
-    assert remote.returncode != 0
-    assert "non-local Supabase URL" in (remote.stdout + remote.stderr)
+    assert unapproved.returncode != 0
+    assert "unapproved Supabase URL" in (unapproved.stdout + unapproved.stderr)
     assert not OUTPUT.exists()
 
 
@@ -90,7 +98,7 @@ def test_secret_key_is_rejected() -> None:
 def main() -> None:
     test_missing_config_is_safe()
     test_valid_config_is_rendered()
-    test_phase3_writes_only_enable_for_local_supabase()
+    test_phase3_writes_only_enable_for_approved_targets()
     test_secret_key_is_rejected()
     if OUTPUT.exists():
         OUTPUT.unlink()
