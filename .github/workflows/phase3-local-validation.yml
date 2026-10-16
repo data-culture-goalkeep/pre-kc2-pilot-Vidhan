@@ -1,0 +1,89 @@
+name: Phase 3 local Supabase validation
+
+on:
+  push:
+    branches:
+      - phase3/write-foundation
+    paths:
+      - "supabase/**"
+      - "frontend/**"
+      - ".github/workflows/phase3-local-validation.yml"
+  pull_request:
+    paths:
+      - "supabase/**"
+      - "frontend/**"
+      - ".github/workflows/phase3-local-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  local-supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb
+        with:
+          version: 2.121.0
+
+      - name: Initialize local Supabase config
+        run: |
+          test ! -f supabase/config.toml
+          supabase init
+
+      - name: Start local Supabase
+        run: supabase start
+
+      - name: Configure local Supabase environment
+        shell: bash
+        run: |
+          supabase status -o env > /tmp/supabase-local.env
+          set -a
+          source /tmp/supabase-local.env
+          set +a
+          echo "::add-mask::$ANON_KEY"
+          echo "::add-mask::$JWT_SECRET"
+          echo "DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres" >> "$GITHUB_ENV"
+          echo "LOCAL_SUPABASE_URL=$API_URL" >> "$GITHUB_ENV"
+          echo "LOCAL_SUPABASE_ANON_KEY=$ANON_KEY" >> "$GITHUB_ENV"
+          echo "LOCAL_SUPABASE_JWT_SECRET=$JWT_SECRET" >> "$GITHUB_ENV"
+
+      - name: Reset local database with Phase 1/2 migrations
+        run: supabase db reset --local
+
+      - name: Apply Phase 3A proposal locally only
+        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/phase3_proposals/001_operational_attendance_foundation.sql
+
+      - name: Load synthetic Phase 3 fixtures
+        run: |
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/phase3_proposals/004_local_synthetic_fixture.sql
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "notify pgrst, 'reload schema';"
+          sleep 2
+
+      - name: Run Phase 3 RLS and provenance assertions
+        run: psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/phase3_proposals/005_local_security_assertions.sql
+
+      - name: Run Phase 3 frontend against local Supabase
+        run: node frontend/tests/phase3-local-write-integration.test.js
+
+      - name: Exercise staging rollback SQL locally
+        run: |
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/phase3_proposals/003_operational_attendance_rollback.sql
+          test "$(psql "$DB_URL" -Atc "select to_regclass('public.operational_attendance_entries') is null")" = "t"
+          test "$(psql "$DB_URL" -Atc "select to_regclass('private.operational_attendance_entry_history') is null")" = "t"
+
+      - name: Run Phase 2 frontend regressions
+        run: |
+          node --check frontend/dist/auth.js
+          node --check frontend/dist/backend.js
+          node --check frontend/dist/app.js
+          node frontend/tests/auth-client.test.js
+          node frontend/tests/frontend-assembly.test.js
+          node frontend/tests/backend-adapter.test.js
+          python3 frontend/tests/runtime-config.test.py
+
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop --no-backup

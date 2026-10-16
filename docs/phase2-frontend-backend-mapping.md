@@ -47,3 +47,17 @@ If Tamahar requires these as production data-entry workflows, the PM/data owner 
 ## Write policy
 
 This branch intentionally performs no insert/update/delete against Phase 1 tables. Migrated source records and their lineage remain unchanged. A future write-capable application should use an approved transactional model and matching RLS rather than treating migrated source-lineage rows as editable application state.
+
+## Verification note: daily attendance blanks and programme labels
+
+Verified against the live Phase 1 Supabase records on 2026-10-14:
+
+- `child_attendance_months` contains monthly aggregate attendance values (`source_present_count`, `source_absent_count`, `source_total_count`, `source_attendance_percentage`) independently of the per-day codes in `child_attendance_days`.
+- Therefore Monthly Work can correctly show existing monthly attendance even when a selected Daily Attendance date has no recorded source code.
+- Daily Attendance must continue to display `—` for an unrecorded day. Missing day codes must not be inferred from monthly totals.
+- In academic year `2026-27`, September is explicitly partial in several source streams: `GC-EI` has coded days only through day 6, `GC-PVSW` through day 7, `TH-OT` through day 6, `TH-PT`/`TH-ST` through day 7, and `TH-VT` through day 8. By contrast, `GC-FA`, `GC-MNH`, and `GC-Nursery` contain codes through day 30.
+- The latest available source period is May `2026-27` (May 2027 in ISO month terms). That period contains `GC-PVSW` rows only, so children outside that source programme correctly have no daily value in that selected period.
+- `children.current_program_source` contains the explicit source value `No new program enrolled` for 275 children. The current UI maps this to the generic text `Not currently enrolled / unmapped`. This does not fabricate an enrolment, but it loses the distinction between an explicit source status and an unknown future unmapped code.
+- Minimal UI clarification recommended for a future polish pass: when `current_program_source = 'No new program enrolled'`, display `No new programme enrolled` (or the exact source wording) rather than the generic `Not currently enrolled / unmapped`. Keep `Not currently enrolled / unmapped` only for genuinely unknown/unmapped values.
+
+No source records, attendance codes, mappings, RLS policies, or database permissions were changed as part of this verification.
