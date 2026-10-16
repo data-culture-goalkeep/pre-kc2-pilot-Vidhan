@@ -2,7 +2,7 @@
 
 Status: **PASS** on GitHub Actions using an ephemeral local Supabase stack and synthetic fixtures only.
 
-No hosted Supabase branch/project was created. No production Supabase schema, grants, RLS policies, or data were changed.
+No hosted Supabase branch/project was created. The production attendance schema was later deployed through the version-controlled migration; local validation continues to use synthetic data only.
 
 ## Requirements for a developer workstation
 
@@ -108,4 +108,4 @@ This validates PostgreSQL/Supabase schema, grants, RLS, trigger behavior, synthe
 
 It does **not** provide a hosted isolated Supabase endpoint for a Vercel Preview. Under the zero-cost constraint, hosted Phase 3 write integration testing is intentionally skipped rather than pointing a write-enabled frontend at production.
 
-Production remains the Phase 2 read-only deployment.
+Production now uses the controlled operational attendance model under RLS. Imported Phase 1 source rows remain read-only.
