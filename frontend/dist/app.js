@@ -370,7 +370,9 @@
     $('view').innerHTML = backendBanner() + pages[state.page]();
   }
 
-  async function loadMonth(month) {
+  let monthQueue = Promise.resolve();
+  function loadMonth(month) {
+    const operation = monthQueue.then(async () => {
     showLoading(`Loading ${month} from Supabase…`);
     try {
       const result = await window.TamaharBackend.loadMonth(state.children, month);
@@ -383,6 +385,9 @@
       console.error(error);
       showError(error);
     }
+    });
+    monthQueue = operation.catch(() => {});
+    return operation;
   }
 
   window.todayInProgrammeZoneForUI = () => todayInProgrammeZone().slice(0,7);
