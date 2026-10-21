@@ -198,8 +198,19 @@
     return header('Daily entry','Attendance and therapy', writeMode() ? 'Record authorized operational attendance without changing imported Phase 1 source rows.' : 'Read-only migrated daily source codes for the selected date.') + filters() + writeNotice() + `<section class="card card-pad"><div class="row"><label class="field-inline">Class day <input type="date" min="${state.month}-01" max="${monthDates(state.month).at(-1)}" value="${date}" onchange="TamaharUI.setEntryDate(this.value)"></label><span class="muted">Operational corrections overlay the immutable Phase 1 baseline after reload.</span></div>${canWriteProgramme()?`<div class="row" style="margin:12px 0;gap:12px;flex-wrap:wrap"><button class="btn" type="button" onclick="TamaharUI.saveSelectedAttendance()">Save selected attendance</button><button class="btn ghost compact" type="button" onclick="TamaharUI.selectAllAttendance(true)">Select all</button><button class="btn ghost compact" type="button" onclick="TamaharUI.selectAllAttendance(false)">Clear</button><span class="muted">Check the children to save together. Unselected records stay unchanged.</span></div>`:""}<div class="table-wrap"><table><thead><tr><th>Child</th><th>Programme</th><th>Class code / entry</th><th>Therapy on this date</th><th>Absence reason</th></tr></thead><tbody>${body || '<tr><td colspan="5">No records.</td></tr>'}</tbody></table></div></section>`;
   }
 
+  function studentVisuals(rows) {
+    const groups = PROGRAMMES.map((name,i)=>({name,count:rows.filter(c=>c.programme===i).length,color:PROGRAMME_COLORS[i]}));
+    const statuses = new Map();
+    rows.forEach(c=>{const label=String(c.status || 'Not recorded').trim() || 'Not recorded';statuses.set(label,(statuses.get(label)||0)+1);});
+    const valid = rows.filter(c=>attendanceStats(c).total>0);
+    const present=valid.reduce((n,c)=>n+attendanceStats(c).present,0);
+    const total=valid.reduce((n,c)=>n+attendanceStats(c).total,0);
+    const percent=total?Math.round(100*present/total):null;
+    return `<div class="metrics"><div class="card metric-card"><span>Children in view</span><div class="metric">${rows.length}</div></div><div class="card metric-card"><span>Attendance recorded</span><div class="metric">${valid.length}</div><small>Children with eligible days in selected month</small></div><div class="card metric-card"><span>Combined attendance</span><div class="metric">${percent===null?'—':percent+'%'}</div><small>Sum(P + PwC) / Sum(P + PwC + A)</small></div><div class="card metric-card"><span>Programme groups</span><div class="metric">${groups.filter(g=>g.count).length}</div></div></div><div class="grid"><section class="card card-pad"><h2 class="section-title">Children by programme</h2>${groups.map(g=>bar(g.name,g.count,Math.max(rows.length,1),g.color)).join('')}</section><section class="card card-pad"><h2 class="section-title">Recorded student statuses</h2>${[...statuses].sort((a,b)=>b[1]-a[1]).map(([label,n])=>bar(label,n,Math.max(rows.length,1),'#527a96')).join('') || '<p class="muted">No matching children.</p>'}</section></div>`;
+  }
+
   function childrenPage() {
-    return header('Records','Children','Open a child to review master data, attendance, therapy and Phase 1 assessments.') + filters() + `<section class="card card-pad" style="margin-bottom:18px"><h2 class="section-title">Backend-connected records</h2><p class="muted">Creation and editing are intentionally disabled until Phase 2 authorization and write/audit rules are approved.</p></section><section class="card">${childTable(visibleChildren())}</section>`;
+    return header('Records','Children','Open a child to review master data, attendance, therapy and Phase 1 assessments.') + filters() + studentVisuals(visibleChildren()) + `<section class="card card-pad" style="margin-bottom:18px"><h2 class="section-title">Backend-connected records</h2><p class="muted">Creation and editing are intentionally disabled until Phase 2 authorization and write/audit rules are approved.</p></section><section class="card">${childTable(visibleChildren())}</section>`;
   }
 
   function severityComparison(rows) {
