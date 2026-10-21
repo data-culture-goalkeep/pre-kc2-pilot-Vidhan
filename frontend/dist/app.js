@@ -45,7 +45,11 @@
     saveKeys: new Set(),
     bulkSaving: false,
     batchFailures: [],
-    writeMessage: ''
+    writeMessage: '',
+    progressYear: 'all',
+    progressStudent: 'all',
+    progressSort: 'name',
+    monthLoading: false
   };
 
   function programmeName(index) {
@@ -177,7 +181,8 @@
       ['mark','✎ Daily attendance'],
       ['children','Children'],
       ['programmes','General info'],
-      ['progress','Child progress']
+      ['progress','Child progress'],
+      ['student-dashboard','Student Progress Dashboard']
     ];
     $('nav').innerHTML = items.map(([key,label]) => `<button class="${state.page===key || (state.page==='child' && key==='children') ? 'active':''}" onclick="TamaharUI.go('${key}')">${label}</button>`).join('') + (window.TamaharAuth?.getSession?.() ? '<button onclick="TamaharUI.signOut()">Clear saved session</button>' : '');
     $('crumb').textContent = items.find(([key]) => key === state.page)?.[1] || (state.page === 'child' ? 'Child record' : 'Programme workspace');
@@ -255,6 +260,88 @@
     return header('Programme review','Child progress','Review migrated ADL and development assessment records without synthetic score conversions.') + filters() + `<div class="metrics"><div class="card metric-card"><span>Children in view</span><div class="metric">${rows.length}</div></div><div class="card metric-card"><span>ADL records</span><div class="metric">${adl}</div></div><div class="card metric-card"><span>Development records</span><div class="metric">${dev}</div></div><div class="card metric-card"><span>Cross-scale score</span><div class="metric">—</div><small>Not invented</small></div></div><section class="card card-pad"><h2 class="section-title">Open a child for assessment detail</h2>${childTable(rows)}</section>`;
   }
 
+
+  // Assessments carry academic years and terms, not exact observation dates.
+  // Describe recorded outcomes; do not infer longitudinal improvement from goal counts.
+  function assessmentYears(rows) {
+    return [...new Set(rows.flatMap(c=>[...(c.backendAdl||[]),...(c.backendDevelopment||[])].map(r=>r.academic_year).filter(Boolean)))].sort();
+  }
+  function progressRows() {
+    return visibleChildren().filter(c=>state.progressStudent==='all'||c.childPk===state.progressStudent);
+  }
+  function progressAssessments(c) {
+    const inYear=r=>state.progressYear==='all'||r.academic_year===state.progressYear;
+    return {adl:(c.backendAdl||[]).filter(inYear),dev:(c.backendDevelopment||[]).filter(inYear)};
+  }
+  function selectedProgressDetail(childPk) {
+    const c=state.children.find(x=>x.childPk===childPk);
+    if(c){state.selectedId=c.id;state.childTab='assessments';state.page='child';render();}
+  }
+  function chartBars(items,unit='count',horizontal=true) {
+    if(!items.length || !items.some(x=>x.value>0))return '<div class="empty">No recorded values for these filters.</div>';
+    const max=Math.max(...items.map(x=>x.value),1);
+    return '<div class="insight-bars">'+items.map(x=>'<div class="insight-bar"><span title="'+esc(x.label)+'">'+esc(x.label)+'</span><div class="insight-track" role="img" aria-label="'+esc(x.label+': '+x.value+' '+unit)+'"><i style="width:'+Math.max(0,100*x.value/max)+'%"></i></div><strong>'+esc(x.display??x.value)+'</strong></div>').join('')+'</div>';
+  }
+  function chartDonut(parts) {
+    const total=parts.reduce((n,x)=>n+x.value,0);
+    if(!total)return '<div class="empty">No students match these filters.</div>';
+    let angle=0;
+    const colors=['#245b36','#8db43c','#d4a629','#527a96','#8d789e'];
+    const stops=parts.filter(x=>x.value>0).map((p,i)=>{const from=angle;angle+=100*p.value/total;return colors[i%colors.length]+' '+from+'% '+angle+'%';}).join(',');
+    return '<div class="donut-layout"><div class="insight-donut" style="background:conic-gradient('+stops+')" role="img" aria-label="'+esc(parts.map(p=>p.label+': '+p.value).join('; '))+'"><div><strong>'+total+'</strong><small>students</small></div></div><div class="donut-legend">'+parts.map((p,i)=>'<div><i style="background:'+colors[i%colors.length]+'"></i><span>'+esc(p.label)+'</span><strong>'+p.value+' · '+(100*p.value/total).toFixed(1)+'%</strong></div>').join('')+'</div></div>';
+  }
+  function chartColumns(items) {
+    if(!items.length||!items.some(x=>x.value>0))return '<div class="empty">No observations for these filters.</div>';
+    const max=Math.max(1,...items.map(x=>x.value));
+    return '<div class="insight-columns" role="img" aria-label="'+esc(items.map(x=>x.label+': '+x.value).join('; '))+'">'+items.map(x=>'<div class="insight-column" title="'+esc(x.label+': '+x.value)+'"><b>'+x.value+'</b><i style="height:'+Math.max(2,100*x.value/max)+'%"></i><span>'+esc(x.label)+'</span></div>').join('')+'</div>';
+  }
+  function chartYearSeries(items) {
+    if(!items.length||!items.some(x=>x.value>0))return '<div class="empty">No recorded assessment observations.</div>';
+    const max=Math.max(1,...items.map(x=>x.value)), w=520,h=158, left=30,right=15,top=17,bottom=32;
+    const pts=items.map((x,i)=>({x:left+(items.length===1?0.5:i/(items.length-1))*(w-left-right),y:top+(1-x.value/max)*(h-top-bottom),...x}));
+    const poly=pts.map(p=>p.x+','+p.y).join(' ');
+    return '<svg class="insight-line" viewBox="0 0 520 158" role="img" aria-label="'+esc('Non-flagged development assessment rows by academic year: '+items.map(x=>x.label+' '+x.value).join(', '))+'"><line x1="30" y1="126" x2="505" y2="126" stroke="#a9bbad"/><polyline fill="none" stroke="#245b36" stroke-width="3" points="'+poly+'"/>'+pts.map(p=>'<circle cx="'+p.x+'" cy="'+p.y+'" r="5" fill="#245b36"><title>'+esc(p.label+': '+p.value+' observations')+'</title></circle><text x="'+p.x+'" y="'+Math.max(13,p.y-10)+'" text-anchor="middle" font-size="12" fill="#245b36">'+p.value+'</text><text x="'+p.x+'" y="146" text-anchor="middle" font-size="12" fill="#405c49">'+esc(p.label)+'</text>').join('')+'</svg>';
+  }
+  function studentProgressDashboard() {
+    const scoped=visibleChildren(), years=assessmentYears(scoped), rows=progressRows();
+    const records=rows.map(c=>({c,...progressAssessments(c)}));
+    const assessed=records.filter(x=>x.adl.length+x.dev.length>0);
+    const usableDev=records.flatMap(x=>x.dev.filter(r=>!r.mark_issue));
+    const usableAdl=records.flatMap(x=>x.adl.filter(r=>!r.mark_issue));
+    const groups=[...new Set(rows.map(c=>programmeName(c.programme)))].sort().map(name=>{
+      const group=records.filter(x=>programmeName(x.c.programme)===name);
+      return {label:name,value:group.filter(x=>x.adl.length+x.dev.length>0).length,total:group.length};
+    });
+    const domainGroups=new Map();
+    for(const r of usableDev){
+      const key=String(r.domain_type||'Unspecified').trim()||'Unspecified';
+      if(!domainGroups.has(key))domainGroups.set(key,{label:key,students:new Set(),observations:0,planned:0,progressed:0,slightly:0,not:0});
+      const d=domainGroups.get(key);d.observations++;
+      for(const [field,target] of [['goals_planned','planned'],['goals_progressed','progressed'],['goals_slightly_progressed','slightly'],['goals_not_progressed','not']]){
+        const v=r[field];if(Number.isInteger(v)&&v>=0)d[target]+=v;
+      }
+    }
+    // Student coverage per domain uses unique child IDs, never counts term rows as students.
+    for(const x of records)for(const r of x.dev.filter(r=>!r.mark_issue)){const d=domainGroups.get(String(r.domain_type||'Unspecified').trim()||'Unspecified');if(d)d.students.add(x.c.childPk);}
+    const domains=[...domainGroups.values()].sort((a,b)=>a.label.localeCompare(b.label));
+    const yearSeries=[...new Set(records.flatMap(x=>x.dev.map(r=>r.academic_year).filter(Boolean)))].sort().map(y=>({label:y,value:records.reduce((n,x)=>n+x.dev.filter(r=>r.academic_year===y&&!r.mark_issue).length,0)}));
+    const adlCategories=[['Independent (4)','goals_independent_score_4'],['Supervision (3)','goals_supervision_score_3'],['Limited assistance (2)','goals_limited_assistance_score_2'],['Extensive assistance (1)','goals_extensive_assistance_score_1'],['Fully dependent (0)','goals_fully_dependent_score_0']].map(([label,key])=>({label,value:usableAdl.reduce((n,r)=>n+(Number.isInteger(r[key])&&r[key]>=0?r[key]:0),0)}));
+    const sort=state.progressSort==='records'?(a,b)=>(b.adl.length+b.dev.length)-(a.adl.length+a.dev.length):(a,b)=>String(a.c.name).localeCompare(String(b.c.name));
+    const details=[...records].sort(sort).slice(0,8);
+    const yearOptions=years.map(y=>'<option value="'+esc(y)+'" '+(state.progressYear===y?'selected':'')+'>'+esc(y)+'</option>').join('');
+    const studentOptions=scoped.map(c=>'<option value="'+esc(c.childPk)+'" '+(state.progressStudent===c.childPk?'selected':'')+'>'+esc(c.name)+' · '+esc(c.sourceId)+'</option>').join('');
+    const headerBlock=header('Assessment evidence','Student Progress Dashboard','Visual summaries of recorded assessment outcomes and coverage. Changes in goal counts are not validated measures of individual developmental growth.');
+    const filtersBlock='<section class="card card-pad"><div class="filters"><label class="field-inline">Academic year <select onchange="TamaharUI.setProgressYear(this.value)"><option value="all">All years</option>'+yearOptions+'</select></label><label class="field-inline">Programme <select onchange="TamaharUI.setProgramme(this.value)"><option value="all">All permitted programmes</option>'+PROGRAMMES.map((n,i)=>'<option value="'+i+'" '+(String(state.programmeFilter)===String(i)?'selected':'')+'>'+esc(n)+'</option>').join('')+'</select></label><label class="field-inline">Student <select onchange="TamaharUI.setProgressStudent(this.value)"><option value="all">All students</option>'+studentOptions+'</select></label><button class="btn ghost compact" onclick="TamaharUI.resetProgressFilters()">Reset filters</button></div><p class="muted">Showing '+esc(state.progressYear==='all'?'all academic years':state.progressYear)+' · '+esc(state.programmeFilter==='all'?'all programmes':programmeName(Number(state.programmeFilter)))+' · '+rows.length+' student(s). Exact assessment dates are not available.</p></section>';
+    const kpis='<div class="metrics insight-kpis"><div class="card metric-card"><span>Students in scope</span><div class="metric">'+rows.length+'</div><small>Accessible, filtered student records</small></div><div class="card metric-card"><span>Students assessed</span><div class="metric">'+assessed.length+'</div><small>At least one ADL or development record</small></div><div class="card metric-card"><span>Assessment coverage</span><div class="metric">'+(rows.length?(100*assessed.length/rows.length).toFixed(1)+'%':'—')+'</div><small>'+assessed.length+' / '+rows.length+' students</small></div><div class="card metric-card"><span>Limited evidence</span><div class="metric">'+(rows.length-assessed.length)+'</div><small>No assessment record in selected year(s)</small></div></div>';
+    if(!rows.length)return headerBlock+filtersBlock+'<div class="empty">No accessible students match the current filters. Reset filters to widen the selection.</div>';
+    const overview='<div class="grid insight-grid"><section class="card card-pad"><h2 class="section-title">Student distribution by programme</h2><p class="muted">Unique students, by current programme assignment.</p>'+chartDonut([...new Set(rows.map(c=>programmeName(c.programme)))].sort().map(label=>({label,value:rows.filter(c=>programmeName(c.programme)===label).length})))+'</section><section class="card card-pad"><h2 class="section-title">Assessment coverage</h2><p class="muted">Students with any assessment record in the academic year selection.</p>'+chartDonut([{label:'Assessed',value:assessed.length},{label:'No assessment record',value:rows.length-assessed.length}])+'</section></div>';
+    const domainCharts='<div class="grid insight-grid"><section class="card card-pad"><h2 class="section-title">Students assessed by developmental domain</h2><p class="muted">Distinct students with a non-flagged development observation in each source domain. Students can appear in more than one domain.</p>'+chartBars(domains.map(d=>({label:d.label,value:d.students.size})))+'</section><section class="card card-pad"><h2 class="section-title">Recorded development goal outcomes</h2><p class="muted">Goal counts pooled across non-flagged observations. These are not student counts or longitudinal change.</p>'+chartColumns([{label:'Progressed',value:domains.reduce((n,d)=>n+d.progressed,0)},{label:'Slightly',value:domains.reduce((n,d)=>n+d.slightly,0)},{label:'Not progressed',value:domains.reduce((n,d)=>n+d.not,0)}])+'</section></div>';
+    const secondary='<div class="grid insight-grid"><section class="card card-pad"><h2 class="section-title">ADL functional-independence categories</h2><p class="muted">Recorded goals by assistance category; source scale labels retained.</p>'+chartBars(adlCategories)+'</section><section class="card card-pad"><h2 class="section-title">Assessment records across academic years</h2><p class="muted">Non-flagged development assessment rows, not growth scores. Term-specific dates are unavailable.</p>'+chartYearSeries(yearSeries)+'</section></div>';
+    const comparison='<div class="grid insight-grid"><section class="card card-pad"><h2 class="section-title">Assessment coverage by programme</h2><p class="muted">Assessed students out of the matching programme population; ratios shown explicitly.</p>'+chartBars(groups.map(g=>({label:g.label,value:g.total?100*g.value/g.total:0,display:g.value+'/'+g.total+' ('+(g.total?(100*g.value/g.total).toFixed(0):'—')+'%)'})),'percent')+'</section><section class="card card-pad"><h2 class="section-title">Review of assessment availability</h2><p class="muted">Evidence coverage only. No unsupported improvement, decline, or clinical concern labels are assigned.</p>'+chartColumns([{label:'Recorded',value:assessed.length},{label:'Not recorded',value:rows.length-assessed.length}])+'</section></div>';
+    const detailsBlock='<details class="card card-pad insight-details"><summary>Student assessment detail · first '+details.length+' of '+records.length+' (expand)</summary><div class="row"><label class="field-inline">Sort <select onchange="TamaharUI.setProgressSort(this.value)"><option value="name" '+(state.progressSort==='name'?'selected':'')+'>Name</option><option value="records" '+(state.progressSort==='records'?'selected':'')+'>Assessment count</option></select></label></div><div class="table-wrap"><table><thead><tr><th>Student</th><th>Programme</th><th>ADL records</th><th>Development records</th><th>Evidence</th><th></th></tr></thead><tbody>'+details.map(x=>'<tr><td>'+esc(x.c.name)+'</td><td>'+esc(programmeName(x.c.programme))+'</td><td>'+x.adl.length+'</td><td>'+x.dev.length+'</td><td>'+(x.adl.length+x.dev.length?'Recorded outcomes':'Limited evidence')+'</td><td><button class="text-link" onclick="TamaharUI.openProgressChild(\''+esc(x.c.childPk)+'\')">Open →</button></td></tr>').join('')+'</tbody></table></div><p class="muted">Use the Student filter above to inspect an individual student not included in this compact table.</p></details>';
+    return headerBlock+filtersBlock+kpis+overview+domainCharts+secondary+comparison+detailsBlock;
+  }
+
   function childHeader(c) {
     return `<div class="row"><button class="btn ghost" onclick="TamaharUI.go('children')">← Children</button>${pill(programmeName(c.programme))}</div>${header('Child record',c.name,`Age ${c.age} · ${c.severity || 'Severity not recorded'} · Enrolled ${c.enrolled || '—'} · Phase 1 backend record`)}`;
   }
@@ -268,10 +355,17 @@
     return `<div class="grid"><section class="card card-pad"><h2 class="section-title">Child master record</h2><p><strong>Source ID:</strong> ${esc(c.sourceId)}</p><p><strong>Status:</strong> ${esc(c.status || '—')}</p><p><strong>Programme:</strong> ${esc(c.programmeSource || programmeName(c.programme))}</p><p><strong>Centre:</strong> ${esc(c.centre || '—')}</p><p><strong>Disability:</strong> ${esc([c.disabilityType,c.disabilitySubType].filter(Boolean).join(' · ') || '—')}</p><p><strong>Severity:</strong> ${esc(c.severity || '—')}</p></section><section class="card card-pad"><h2 class="section-title">Attendance this month</h2><div class="metric">${a.percent==null?'—':a.percent+'%'}</div><p class="muted">${a.present} present (including ${a.pwc} PwC) · ${a.absent} absent · effective total ${a.total}</p></section><section class="card card-pad"><h2 class="section-title">Assessments</h2><p>${(c.backendAdl||[]).length} ADL record(s)</p><p>${(c.backendDevelopment||[]).length} development record(s)</p></section><section class="card card-pad"><h2 class="section-title">Prototype-only features</h2><p class="muted">Goals, behaviour concerns, home guidance and work-skill entry are retained as navigation references but are not persisted because Phase 1 has no approved matching write tables.</p></section></div>`;
   }
   function childAttendance(c) {
+    const month=state.month, prior=new Date(month+'-01T12:00:00Z');
+    prior.setUTCMonth(prior.getUTCMonth()-1);
+    const following=new Date(month+'-01T12:00:00Z');
+    following.setUTCMonth(following.getUTCMonth()+1);
+    const prev=prior.toISOString().slice(0,7),next=following.toISOString().slice(0,7);
+    const available=state.availableMonths;
+    const monthControls=`<div class="row" style="margin-bottom:14px;flex-wrap:wrap;gap:10px"><button class="btn ghost compact" onclick="TamaharUI.childMonth('${prev}')">← Previous</button><label class="field-inline">Month <input type="month" value="${esc(month)}" onchange="TamaharUI.childMonth(this.value)"></label><button class="btn ghost compact" onclick="TamaharUI.childMonth('${next}')">Next →</button><button class="btn ghost compact" onclick="TamaharUI.childMonth(todayInProgrammeZoneForUI())">Current month</button></div><p class="muted">Selected student: ${esc(c.name)} · ${esc(c.sourceId)}. Source months available: ${esc(available[0]||'none')} to ${esc(available.at(-1)||'none')}. You can also inspect a month without records.</p>`;
     const dates = monthDates(state.month);
     const first = new Date(`${state.month}-01T12:00:00`).getDay();
     const a = attendanceStats(c);
-    return `<div class="grid"><section class="card card-pad"><h2 class="section-title">${esc(state.month)} attendance</h2><p class="muted">P and PwC count as present; A counts as absent; H and NS are excluded from the monthly total. Daily source codes remain visible unchanged.</p><div class="month-grid">${Array.from({length:first},()=>'<span></span>').join('')}${dates.map((date,i)=>{const raw=c.attendanceRaw?.[date]||c.attendance?.[date]||'';return `<div class="day ${raw?'':'off'}"><strong>${i+1}</strong><small>${raw?pill(raw,raw==='A'?'warn':raw==='P'?'':'grey'):'—'}</small></div>`}).join('')}</div><p><strong>${a.percent==null?'Monthly percentage unavailable':a.percent+'%'}</strong> · ${a.present} present (including ${a.pwc} PwC) · ${a.absent} absent · effective total ${a.total}</p></section><section class="card card-pad"><h2 class="section-title">Absence reasons</h2><div class="list">${dates.filter(d=>c.attendance?.[d]==='A').map(d=>`<div class="item"><strong>${esc(d)}</strong><small>${esc(c.absences?.[d]?.reason || 'No source reason recorded')}</small></div>`).join('') || '<p class="muted">No P/A-coded absences for this month.</p>'}</div></section></div>`;
+    return monthControls + `<div class="grid"><section class="card card-pad"><h2 class="section-title">${esc(state.month)} attendance</h2><p class="muted">P and PwC count as present; A counts as absent; H and NS are excluded from the monthly total. Daily source codes remain visible unchanged.</p><div class="month-grid">${Array.from({length:first},()=>'<span></span>').join('')}${dates.map((date,i)=>{const raw=c.attendanceRaw?.[date]||c.attendance?.[date]||'';return `<div class="day ${raw?'':'off'}"><strong>${i+1}</strong><small>${raw?pill(raw,raw==='A'?'warn':raw==='P'?'':'grey'):'—'}</small></div>`}).join('')}</div><p><strong>${a.percent==null?'Monthly percentage unavailable':a.percent+'%'}</strong> · ${a.present} present (including ${a.pwc} PwC) · ${a.absent} absent · effective total ${a.total}</p></section><section class="card card-pad"><h2 class="section-title">Absence reasons</h2><div class="list">${dates.filter(d=>c.attendance?.[d]==='A').map(d=>`<div class="item"><strong>${esc(d)}</strong><small>${esc(c.absences?.[d]?.reason || 'No source reason recorded')}</small></div>`).join('') || '<p class="muted">No P/A-coded absences for this month.</p>'}</div></section></div>`;
   }
   function childAssessments(c) {
     const adl = c.backendAdl || [];
@@ -303,11 +397,13 @@
 
   function render() {
     renderNav();
-    const pages = {today:dashboard, mark:dailyAttendance, children:childrenPage, programmes:programmeReview, progress:progressPage, child:childPage};
+    const pages = {today:dashboard, mark:dailyAttendance, children:childrenPage, programmes:programmeReview, progress:progressPage, 'student-dashboard':studentProgressDashboard, child:childPage};
     $('view').innerHTML = backendBanner() + pages[state.page]();
   }
 
-  async function loadMonth(month) {
+  let monthQueue = Promise.resolve();
+  function loadMonth(month) {
+    const operation = monthQueue.then(async () => {
     showLoading(`Loading ${month} from Supabase…`);
     try {
       const result = await window.TamaharBackend.loadMonth(state.children, month);
@@ -320,9 +416,19 @@
       console.error(error);
       showError(error);
     }
+    });
+    monthQueue = operation.catch(() => {});
+    return operation;
   }
 
+  window.todayInProgrammeZoneForUI = () => todayInProgrammeZone().slice(0,7);
   window.TamaharUI = {
+    openProgressChild(childPk) { selectedProgressDetail(childPk); },
+    setProgressYear(value) { state.progressYear=value;render(); },
+    setProgressStudent(value) { state.progressStudent=value;render(); },
+    setProgressSort(value) { state.progressSort=value;render(); },
+    resetProgressFilters() {state.progressYear='all';state.progressStudent='all';state.programmeFilter='all';state.search='';state.progressSort='name';render();},
+    childMonth(value) {if(/^\\d{4}-\\d{2}$/.test(value))loadMonth(value);},
     go(page) { if(page==='mark' && state.page!=='mark' && !storedDate()) {state.entryDate=todayInProgrammeZone();state.month=state.entryDate.slice(0,7);loadMonth(state.month);} state.page = page; render(); window.scrollTo({top:0,behavior:'smooth'}); },
     openChild(id) { state.selectedId = Number(id); state.childTab='overview'; state.page='child'; render(); window.scrollTo({top:0,behavior:'smooth'}); },
     setChildTab(tab) { state.childTab = tab; render(); },
