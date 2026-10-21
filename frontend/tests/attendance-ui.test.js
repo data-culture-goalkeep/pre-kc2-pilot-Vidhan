@@ -79,7 +79,7 @@ function createHarness({selectedCodes=['P','A','PwC'],failure=[],now='2026-10-21
     assert.equal(h.button.disabled,false,'button is not permanently disabled after completion');
   }
   {
-    const h=createHarness({failure:['child-1']});await h.ready();
+    const h=createHarness({failure:['child-1']});await h.ready();h.window.TamaharUI.go('mark');await h.ready();
     await h.window.TamaharUI.saveSelectedAttendance({preventDefault(){}});
     assert.equal(h.persisted.size,2);
     assert.match(h.view.innerHTML,/Verified 2 of 3/);
@@ -87,7 +87,7 @@ function createHarness({selectedCodes=['P','A','PwC'],failure=[],now='2026-10-21
     assert.equal(h.forms[0].elements.bulkSelected.checked,true,'fake form state is not cleared; real DOM replaces it');
   }
   {
-    const h=createHarness({failure:['child-0','child-1','child-2']});await h.ready();
+    const h=createHarness({failure:['child-0','child-1','child-2']});await h.ready();h.window.TamaharUI.go('mark');await h.ready();
     await h.window.TamaharUI.saveSelectedAttendance({preventDefault(){}});
     assert.equal(h.persisted.size,0);
     assert.match(h.view.innerHTML,/Verified 0 of 3/);
