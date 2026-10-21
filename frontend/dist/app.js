@@ -10,6 +10,24 @@
   const PROGRAMME_COLORS = ['#245b36','#96b940','#dfb920','#527a96'];
   const THERAPIES = ['Occupational therapy','Visual therapy','Speech therapy','Physical therapy'];
   const cfg = window.TAMAHAR_CONFIG || {};
+  const attendanceDateKey = 'tamahar.attendance.selectedDate.v2';
+  const attendanceZone = 'Asia/Kolkata';
+  function todayInProgrammeZone(now = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-CA',{timeZone:attendanceZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);
+    const part = type => parts.find(x=>x.type===type)?.value;
+    return [part('year'),part('month'),part('day')].join('-');
+  }
+  function validDate(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false;
+    const d = new Date(value + 'T12:00:00Z');
+    return !Number.isNaN(d.valueOf()) && d.toISOString().slice(0,10) === value;
+  }
+  function storedDate() {
+    try { const v=window.sessionStorage.getItem(attendanceDateKey);return validDate(v)?v:null; } catch {return null;}
+  }
+  function rememberDate(value) {
+    try { if(validDate(value)) window.sessionStorage.setItem(attendanceDateKey,value);else window.sessionStorage.removeItem(attendanceDateKey); } catch {}
+  }
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 
@@ -26,6 +44,7 @@
     availableMonths: [],
     saveKeys: new Set(),
     bulkSaving: false,
+    batchFailures: [],
     writeMessage: ''
   };
 
@@ -195,7 +214,7 @@
         : '';
       return `<tr><td><button class="text-link" onclick="TamaharUI.openChild(${c.id})">${esc(c.name)}</button></td><td>${esc(programmeName(c.programme))}</td><td>${programmeEditor}</td><td>${therapyDisplay}<div class="cell-actions">${therapyEditor}</div></td><td>${esc(c.absences?.[date]?.reason || '—')}</td></tr>`;
     }).join('');
-    return header('Daily entry','Attendance and therapy', writeMode() ? 'Record authorized operational attendance without changing imported Phase 1 source rows.' : 'Read-only migrated daily source codes for the selected date.') + filters() + writeNotice() + `<section class="card card-pad"><div class="row"><label class="field-inline">Class day <input type="date" min="${state.month}-01" max="${monthDates(state.month).at(-1)}" value="${date}" onchange="TamaharUI.setEntryDate(this.value)"></label><span class="muted">Operational corrections overlay the immutable Phase 1 baseline after reload.</span></div>${canWriteProgramme()?`<div class="row" style="margin:12px 0;gap:12px;flex-wrap:wrap"><button class="btn" type="button" onclick="TamaharUI.saveSelectedAttendance()">Save selected attendance</button><button class="btn ghost compact" type="button" onclick="TamaharUI.selectAllAttendance(true)">Select all</button><button class="btn ghost compact" type="button" onclick="TamaharUI.selectAllAttendance(false)">Clear</button><span class="muted">Check the children to save together. Unselected records stay unchanged.</span></div>`:""}<div class="table-wrap"><table><thead><tr><th>Child</th><th>Programme</th><th>Class code / entry</th><th>Therapy on this date</th><th>Absence reason</th></tr></thead><tbody>${body || '<tr><td colspan="5">No records.</td></tr>'}</tbody></table></div></section>`;
+    return header('Daily entry','Attendance and therapy', writeMode() ? 'Record authorized operational attendance without changing imported Phase 1 source rows.' : 'Read-only migrated daily source codes for the selected date.') + filters() + writeNotice() + `<section class="card card-pad"><div class="row"><label class="field-inline">Class day <input type="date" min="${state.month}-01" max="${monthDates(state.month).at(-1)}" value="${date}" onchange="TamaharUI.setEntryDate(this.value)"></label><button class="btn ghost compact" type="button" onclick="TamaharUI.todayAttendance()">Today</button><span class="muted">Operational corrections overlay the immutable Phase 1 baseline after reload.</span></div>${canWriteProgramme()?`<div class="row" style="margin:12px 0;gap:12px;flex-wrap:wrap"><button class="btn" type="button" data-batch-save onclick="TamaharUI.saveSelectedAttendance(event)" ${state.bulkSaving?'disabled':''}>${state.bulkSaving?'Saving selected…':'Save selected attendance' }</button><button class="btn ghost compact" type="button" onclick="TamaharUI.selectAllAttendance(true)">Select all</button><button class="btn ghost compact" type="button" onclick="TamaharUI.selectAllAttendance(false)">Clear</button><span class="muted">Check the children to save together. Unselected records stay unchanged.</span></div>`:""}<div class="table-wrap"><table><thead><tr><th>Child</th><th>Programme</th><th>Class code / entry</th><th>Therapy on this date</th><th>Absence reason</th></tr></thead><tbody>${body || '<tr><td colspan="5">No records.</td></tr>'}</tbody></table></div></section>`;
   }
 
   function studentVisuals(rows) {
@@ -304,7 +323,7 @@
   }
 
   window.TamaharUI = {
-    go(page) { state.page = page; render(); window.scrollTo({top:0,behavior:'smooth'}); },
+    go(page) { if(page==='mark' && state.page!=='mark' && !storedDate()) {state.entryDate=todayInProgrammeZone();state.month=state.entryDate.slice(0,7);loadMonth(state.month);} state.page = page; render(); window.scrollTo({top:0,behavior:'smooth'}); },
     openChild(id) { state.selectedId = Number(id); state.childTab='overview'; state.page='child'; render(); window.scrollTo({top:0,behavior:'smooth'}); },
     setChildTab(tab) { state.childTab = tab; render(); },
     setProgramme(value) { state.programmeFilter = value; render(); },
@@ -366,54 +385,88 @@
       state.children = [];
       state.availableMonths = [];
       state.selectedId = null;
+      rememberDate(null);
       await bootstrap();
     },
     selectAllAttendance(checked) {
       document.querySelectorAll('#view form.inline-edit input[name="bulkSelected"]').forEach(box => box.checked = checked);
     },
-    async saveSelectedAttendance() {
+    async saveSelectedAttendance(event) {
+      event?.preventDefault?.();
       if (!canWriteProgramme() || state.bulkSaving) return;
-      const date = state.entryDate?.startsWith(state.month) ? state.entryDate : state.month + '-01';
-      const selected = [...document.querySelectorAll('#view form.inline-edit')].filter(form => form.elements.bulkSelected?.checked);
-      if (!selected.length) { state.writeMessage = 'Select one or more children first.'; render(); return; }
-      const entries = [];
-      for (const form of selected) {
-        const c = childById(Number(form.dataset.childId));
-        if (!c || !programmeWritable(c)) continue;
-        const code = form.elements.attendanceCode.value;
-        const correctionReason = form.elements.correctionReason?.value.trim() || '';
-        const sourceLabel = window.TamaharBackend.programmeSourceLabel(c.programmeSource);
-        const meta = c.attendanceMeta?.[date] || {};
-        const existing = c.operationalEntries?.[date + '|' + sourceLabel] || null;
-        if (!code || ((meta.baselineExists || existing) && !correctionReason)) {
-          state.writeMessage = 'Check the attendance code and required correction reason for ' + c.name + '.';
-          render(); return;
-        }
-        entries.push({c, code, correctionReason, sourceLabel, meta, existing, reason:form.elements.reason?.value.trim() || ''});
+      const date = state.entryDate?.startsWith(state.month) ? state.entryDate : todayInProgrammeZone();
+      const selected = [...document.querySelectorAll('#view form.inline-edit')].filter(form=>form.elements.bulkSelected?.checked);
+      if (!selected.length) {
+        state.writeMessage='Select one or more children first.';
+        document.querySelector('[data-batch-save]')?.insertAdjacentHTML('afterend','<span role="alert">'+esc(state.writeMessage)+'</span>');
+        return;
       }
-      if (!entries.length) { state.writeMessage='No authorized entries selected.'; render(); return; }
-      state.bulkSaving = true;
-      let saved = 0;
-      const failures = [];
-      for (const item of entries) {
-        const key = item.c.childPk + '|' + date + '|' + item.sourceLabel;
-        if (state.saveKeys.has(key)) { failures.push(item.c.name + ': already saving'); continue; }
+      const entries=[], failures=[];
+      for(const form of selected) {
+        const c=childById(Number(form.dataset.childId));
+        if(!c || !programmeWritable(c)) {failures.push((c?.name||'Selected child')+': not authorized for programme attendance');continue;}
+        const code=form.elements.attendanceCode.value;
+        const correctionReason=form.elements.correctionReason?.value.trim()||'';
+        const sourceLabel=window.TamaharBackend.programmeSourceLabel(c.programmeSource);
+        const meta=c.attendanceMeta?.[date]||{};
+        const existing=c.operationalEntries?.[date+'|'+sourceLabel]||null;
+        const item={c,code,correctionReason,sourceLabel,meta,existing,reason:form.elements.reason?.value.trim()||''};
+        entries.push(item);
+        if(!code || ((meta.baselineExists||existing)&&!correctionReason)) {
+          failures.push(c.name+': select a code and supply the required correction reason');
+          item.invalid=true;
+        }
+      }
+      state.bulkSaving=true;
+      const saveButton=document.querySelector('[data-batch-save]');
+      if(saveButton){saveButton.disabled=true;saveButton.textContent='Saving '+selected.length+' entries…';}
+      let accepted=0;
+      for(const item of entries) {
+        if(item.invalid)continue;
+        const key=item.c.childPk+'|'+date+'|'+item.sourceLabel;
+        if(state.saveKeys.has(key)){failures.push(item.c.name+': already being saved');continue;}
         state.saveKeys.add(key);
         try {
           await window.TamaharBackend.saveOperationalAttendance({
-            childPk:item.c.childPk, programmeSource:item.c.programmeSource, entryDate:date,
-            activityType:'programme', activitySourceLabel:item.sourceLabel,
-            attendanceCode:item.code, reasonForAbsence:item.reason, correctionReason:item.correctionReason,
-            baselineExists:!!item.meta.baselineExists,
-            attendanceEntryId:item.existing?.attendance_entry_id || null
+            childPk:item.c.childPk,programmeSource:item.c.programmeSource,entryDate:date,
+            activityType:'programme',activitySourceLabel:item.sourceLabel,
+            attendanceCode:item.code,reasonForAbsence:item.reason,correctionReason:item.correctionReason,
+            baselineExists:!!item.meta.baselineExists,attendanceEntryId:item.existing?.attendance_entry_id||null
           });
-          saved++;
-        } catch(error) { failures.push(item.c.name + ': ' + (error?.message || 'Failed')); }
-        finally { state.saveKeys.delete(key); }
+          accepted++;
+        } catch(error) {
+          failures.push(item.c.name+': '+(error?.message||'Network or database write failed'));
+        } finally {state.saveKeys.delete(key);}
       }
-      state.bulkSaving = false;
-      state.writeMessage = 'Saved ' + saved + ' of ' + entries.length + ' entries.' + (failures.length ? ' Failed: ' + failures.join('; ') : '');
-      if (saved) await loadMonth(state.month); else render();
+      let refreshed=false;
+      try {
+        await loadMonth(state.month);
+        refreshed=true;
+      } catch(error) {failures.push('Refresh: '+(error?.message||'Unable to verify stored records'));}
+      let verified=0;
+      if(refreshed) for(const item of entries) {
+        if(failures.some(message=>message.startsWith(item.c.name+':')))continue;
+        const live=state.children.find(c=>c.childPk===item.c.childPk);
+        const row=live?.operationalEntries?.[date+'|'+item.sourceLabel];
+        if(row?.attendance_code===item.code)verified++;
+        else failures.push(item.c.name+': persisted record not verified; review before retrying');
+      }
+      state.bulkSaving=false;
+      if(saveButton){saveButton.disabled=false;saveButton.textContent='Save selected attendance';}
+      state.writeMessage=refreshed?
+        'Verified '+verified+' of '+selected.length+' selected entries.' :
+        'Database acknowledged '+accepted+' of '+selected.length+' entries, but refresh failed. Check saved records before retrying.';
+      if(failures.length)state.writeMessage+=' Issues: '+failures.join('; ');
+      render();
+      const pending=entries.filter(item=>failures.some(message=>message.startsWith(item.c.name+':')));
+      for(const item of pending) {
+        const form=document.querySelector('#view form.inline-edit[data-child-id="'+item.c.id+'"]');
+        if(!form)continue;
+        form.elements.bulkSelected.checked=true;
+        form.elements.attendanceCode.value=item.code;
+        form.elements.reason.value=item.reason;
+        form.elements.correctionReason.value=item.correctionReason;
+      }
     },
     async saveProgrammeAttendance(event, childId, date) {
       event?.preventDefault?.();
@@ -506,7 +559,8 @@
         state.saveKeys.delete(key);
       }
     },
-    setEntryDate(value) { state.entryDate = value; render(); },
+    setEntryDate(value) { if(!validDate(value))return;state.entryDate=value;rememberDate(value);if(value.slice(0,7)!==state.month)loadMonth(value.slice(0,7));else render(); },
+    todayAttendance() { const date=todayInProgrammeZone();state.entryDate=date;rememberDate(date);if(date.slice(0,7)!==state.month)loadMonth(date.slice(0,7));else render(); },
     setMonth(value) { if (value) loadMonth(value); }
   };
 
@@ -532,7 +586,9 @@
       state.children = data.children;
       state.availableMonths = data.availableMonths || [];
       state.month = data.selectedMonth || state.month;
-      state.entryDate = `${state.month}-01`;
+      state.entryDate = storedDate() || todayInProgrammeZone();
+      state.month = state.entryDate.slice(0,7);
+      if (data.selectedMonth !== state.month) await window.TamaharBackend.loadMonth(state.children,state.month);
       state.holidays = data.holidays || {};
       state.selectedId = state.children[0]?.id || null;
       setStatus(`Connected · ${state.children.length} Phase 1 child records · ${writeMode()?'controlled attendance writes enabled':'read-only'}`);
