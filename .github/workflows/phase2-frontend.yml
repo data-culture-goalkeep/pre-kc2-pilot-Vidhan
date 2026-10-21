@@ -26,6 +26,8 @@ jobs:
           node --check frontend/dist/app.js
       - name: Run authentication client tests
         run: node frontend/tests/auth-client.test.js
+      - name: Run attendance UI regression tests
+        run: node frontend/tests/attendance-ui.test.js
       - name: Verify frontend module assembly
         run: node frontend/tests/frontend-assembly.test.js
       - name: Run backend adapter tests
