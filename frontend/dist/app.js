@@ -45,7 +45,11 @@
     saveKeys: new Set(),
     bulkSaving: false,
     batchFailures: [],
-    writeMessage: ''
+    writeMessage: '',
+    progressYear: 'all',
+    progressStudent: 'all',
+    progressSort: 'name',
+    monthLoading: false
   };
 
   function programmeName(index) {
@@ -177,7 +181,8 @@
       ['mark','✎ Daily attendance'],
       ['children','Children'],
       ['programmes','General info'],
-      ['progress','Child progress']
+      ['progress','Child progress'],
+      ['student-dashboard','Student Progress Dashboard']
     ];
     $('nav').innerHTML = items.map(([key,label]) => `<button class="${state.page===key || (state.page==='child' && key==='children') ? 'active':''}" onclick="TamaharUI.go('${key}')">${label}</button>`).join('') + (window.TamaharAuth?.getSession?.() ? '<button onclick="TamaharUI.signOut()">Clear saved session</button>' : '');
     $('crumb').textContent = items.find(([key]) => key === state.page)?.[1] || (state.page === 'child' ? 'Child record' : 'Programme workspace');
@@ -255,6 +260,57 @@
     return header('Programme review','Child progress','Review migrated ADL and development assessment records without synthetic score conversions.') + filters() + `<div class="metrics"><div class="card metric-card"><span>Children in view</span><div class="metric">${rows.length}</div></div><div class="card metric-card"><span>ADL records</span><div class="metric">${adl}</div></div><div class="card metric-card"><span>Development records</span><div class="metric">${dev}</div></div><div class="card metric-card"><span>Cross-scale score</span><div class="metric">—</div><small>Not invented</small></div></div><section class="card card-pad"><h2 class="section-title">Open a child for assessment detail</h2>${childTable(rows)}</section>`;
   }
 
+
+  // Assessments carry academic years and terms, not exact observation dates.
+  // Describe recorded outcomes; do not infer longitudinal improvement from goal counts.
+  function assessmentYears(rows) {
+    return [...new Set(rows.flatMap(c=>[...(c.backendAdl||[]),...(c.backendDevelopment||[])].map(r=>r.academic_year).filter(Boolean)))].sort();
+  }
+  function progressRows() {
+    return visibleChildren().filter(c=>state.progressStudent==='all'||c.childPk===state.progressStudent);
+  }
+  function progressAssessments(c) {
+    const inYear=r=>state.progressYear==='all'||r.academic_year===state.progressYear;
+    return {adl:(c.backendAdl||[]).filter(inYear),dev:(c.backendDevelopment||[]).filter(inYear)};
+  }
+  function selectedProgressDetail(childPk) {
+    const c=state.children.find(x=>x.childPk===childPk);
+    if(c){state.selectedId=c.id;state.childTab='assessments';state.page='child';render();}
+  }
+  function studentProgressDashboard() {
+    const scoped=visibleChildren(),years=assessmentYears(scoped),rows=progressRows();
+    const records=rows.map(c=>({c,...progressAssessments(c)}));
+    const assessed=records.filter(x=>x.adl.length+x.dev.length>0);
+    const dev=records.flatMap(x=>x.dev.filter(r=>!r.mark_issue));
+    const adl=records.flatMap(x=>x.adl.filter(r=>!r.mark_issue));
+    const counts=new Map();
+    for(const r of dev){
+      const domain=String(r.domain_type||'Unspecified').trim();
+      const k=domain+'|'+String(r.term||'Unspecified');
+      if(!counts.has(k))counts.set(k,{domain,term:r.term||'Unspecified',observations:0,planned:0,progressed:0,slightly:0,not:0});
+      const v=counts.get(k);v.observations++;
+      for(const [field,target] of [['goals_planned','planned'],['goals_progressed','progressed'],['goals_slightly_progressed','slightly'],['goals_not_progressed','not']]){
+        if(Number.isInteger(r[field])&&r[field]>=0)v[target]+=r[field];
+      }
+    }
+    const groups=[...new Set(scoped.map(c=>programmeName(c.programme)))].sort().map(name=>{
+      const group=records.filter(x=>programmeName(x.c.programme)===name);
+      const covered=group.filter(x=>x.adl.length+x.dev.length>0).length;
+      return {name,total:group.length,covered};
+    });
+    const sorted=[...records].sort((x,y)=>state.progressSort==='records'
+      ? (y.adl.length+y.dev.length)-(x.adl.length+x.dev.length)
+      : String(x.c.name).localeCompare(String(y.c.name)));
+    const yearOptions=years.map(y=>`<option value="${esc(y)}" ${state.progressYear===y?'selected':''}>${esc(y)}</option>`).join('');
+    const studentOptions=scoped.map(c=>`<option value="${esc(c.childPk)}" ${state.progressStudent===c.childPk?'selected':''}>${esc(c.name)} · ${esc(c.sourceId)}</option>`).join('');
+    return header('Assessment evidence','Student Progress Dashboard','Review recorded ADL independence categories and development goal outcomes. Academic-year/term records do not establish individual growth without comparable dated assessments.')
+      + `<section class="card card-pad"><div class="filters"><label class="field-inline">Academic year <select onchange="TamaharUI.setProgressYear(this.value)"><option value="all">All available years</option>${yearOptions}</select></label><label class="field-inline">Programme <select onchange="TamaharUI.setProgramme(this.value)"><option value="all">All permitted programmes</option>${PROGRAMMES.map((n,i)=>`<option value="${i}" ${String(state.programmeFilter)===String(i)?'selected':''}>${esc(n)}</option>`).join('')}</select></label><label class="field-inline">Student <select onchange="TamaharUI.setProgressStudent(this.value)"><option value="all">All students</option>${studentOptions}</select></label><button class="btn ghost compact" onclick="TamaharUI.resetProgressFilters()">Reset filters</button></div><p class="muted">Viewing ${esc(state.progressYear==='all'?'all available academic years':state.progressYear)} · ${esc(state.programmeFilter==='all'?'all permitted programmes':programmeName(Number(state.programmeFilter)))} · ${rows.length} student(s). Assessment dates are not stored; calendar-month presets would be misleading.</p></section>`
+      + `<div class="metrics" style="margin-top:16px"><div class="card metric-card"><span>Students in scope</span><div class="metric">${rows.length}</div><small>Accessible children matching filters</small></div><div class="card metric-card"><span>With assessment records</span><div class="metric">${assessed.length}</div><small>${rows.length?(100*assessed.length/rows.length).toFixed(1):'—'}% of students in scope</small></div><div class="card metric-card"><span>Development observations</span><div class="metric">${dev.length}</div><small>Non-flagged domain/term rows</small></div><div class="card metric-card"><span>ADL observations</span><div class="metric">${adl.length}</div><small>Non-flagged academic-year rows</small></div></div>`
+      + `<div class="grid"><section class="card card-pad"><h2 class="section-title">Assessment coverage by programme</h2><p class="muted">Assessed students / accessible students in each programme, within the selected academic year.</p>${groups.map(g=>`<div class="bar-row"><span>${esc(g.name)}</span><div class="bar"><i style="width:${g.total?100*g.covered/g.total:0}%"></i></div><strong>${g.covered}/${g.total}</strong></div>`).join('')||'<div class="empty">No students in scope.</div>'}</section><section class="card card-pad"><h2 class="section-title">ADL independence categories</h2><p class="muted">Number of goals recorded in each existing source category; these are distributions, not changes in independence over time.</p>${[['Independent (4)','goals_independent_score_4'],['Supervision (3)','goals_supervision_score_3'],['Limited assistance (2)','goals_limited_assistance_score_2'],['Extensive assistance (1)','goals_extensive_assistance_score_1'],['Fully dependent (0)','goals_fully_dependent_score_0']].map(([label,key])=>{const total=adl.reduce((n,r)=>n+(Number(r[key])||0),0),max=adl.reduce((n,r)=>n+Math.max(0,Number(r.goals_planned)||0),0);return bar(label,total,Math.max(max,total));}).join('')||'<div class="empty">No ADL records.</div>'}</section></div>`
+      + `<section class="card card-pad" style="margin-top:18px"><h2 class="section-title">Development goal outcomes by source domain and term</h2><p class="muted">Goal counts are descriptive. A progressed goal is a recorded outcome, not evidence of improvement versus a previous assessment. Rows marked as issues are excluded.</p><div class="table-wrap"><table><thead><tr><th>Domain</th><th>Term</th><th>Observations</th><th>Goals planned</th><th>Progressed</th><th>Slightly progressed</th><th>Not progressed</th></tr></thead><tbody>${[...counts.values()].sort((a,b)=>a.domain.localeCompare(b.domain)||a.term.localeCompare(b.term)).map(g=>`<tr><td>${esc(g.domain)}</td><td>${esc(g.term)}</td><td>${g.observations}</td><td>${g.planned}</td><td>${g.progressed}</td><td>${g.slightly}</td><td>${g.not}</td></tr>`).join('')||'<tr><td colspan="7">No usable development observations for these filters.</td></tr>'}</tbody></table></div></section>`
+      + `<section class="card card-pad" style="margin-top:18px"><div class="row"><h2 class="section-title">Student assessment detail</h2><label class="field-inline">Sort <select onchange="TamaharUI.setProgressSort(this.value)"><option value="name" ${state.progressSort==='name'?'selected':''}>Name</option><option value="records" ${state.progressSort==='records'?'selected':''}>Assessment count</option></select></label></div><p class="muted">Progress classification: insufficient comparable assessment evidence. This dataset does not provide exact assessment dates or a validated repeat-measure scoring method.</p><div class="table-wrap"><table><thead><tr><th>Student</th><th>Programme</th><th>ADL rows</th><th>Development rows</th><th>Available academic years</th><th>Evidence</th><th></th></tr></thead><tbody>${sorted.map(x=>{const yrs=[...new Set([...x.adl,...x.dev].map(r=>r.academic_year).filter(Boolean))].sort();return `<tr><td>${esc(x.c.name)}<small class="muted">${esc(x.c.sourceId)}</small></td><td>${esc(programmeName(x.c.programme))}</td><td>${x.adl.length}</td><td>${x.dev.length}</td><td>${esc(yrs.join(', ')||'—')}</td><td>${x.adl.length+x.dev.length?'Recorded outcomes; longitudinal comparison not validated':'Limited assessment evidence'}</td><td><button class="text-link" onclick="TamaharUI.openProgressChild('${esc(x.c.childPk)}')">Open →</button></td></tr>`}).join('')||'<tr><td colspan="7">No student assessments match the selected filters.</td></tr>'}</tbody></table></div></section>`;
+  }
+
   function childHeader(c) {
     return `<div class="row"><button class="btn ghost" onclick="TamaharUI.go('children')">← Children</button>${pill(programmeName(c.programme))}</div>${header('Child record',c.name,`Age ${c.age} · ${c.severity || 'Severity not recorded'} · Enrolled ${c.enrolled || '—'} · Phase 1 backend record`)}`;
   }
@@ -268,10 +324,17 @@
     return `<div class="grid"><section class="card card-pad"><h2 class="section-title">Child master record</h2><p><strong>Source ID:</strong> ${esc(c.sourceId)}</p><p><strong>Status:</strong> ${esc(c.status || '—')}</p><p><strong>Programme:</strong> ${esc(c.programmeSource || programmeName(c.programme))}</p><p><strong>Centre:</strong> ${esc(c.centre || '—')}</p><p><strong>Disability:</strong> ${esc([c.disabilityType,c.disabilitySubType].filter(Boolean).join(' · ') || '—')}</p><p><strong>Severity:</strong> ${esc(c.severity || '—')}</p></section><section class="card card-pad"><h2 class="section-title">Attendance this month</h2><div class="metric">${a.percent==null?'—':a.percent+'%'}</div><p class="muted">${a.present} present (including ${a.pwc} PwC) · ${a.absent} absent · effective total ${a.total}</p></section><section class="card card-pad"><h2 class="section-title">Assessments</h2><p>${(c.backendAdl||[]).length} ADL record(s)</p><p>${(c.backendDevelopment||[]).length} development record(s)</p></section><section class="card card-pad"><h2 class="section-title">Prototype-only features</h2><p class="muted">Goals, behaviour concerns, home guidance and work-skill entry are retained as navigation references but are not persisted because Phase 1 has no approved matching write tables.</p></section></div>`;
   }
   function childAttendance(c) {
+    const month=state.month, prior=new Date(month+'-01T12:00:00Z');
+    prior.setUTCMonth(prior.getUTCMonth()-1);
+    const following=new Date(month+'-01T12:00:00Z');
+    following.setUTCMonth(following.getUTCMonth()+1);
+    const prev=prior.toISOString().slice(0,7),next=following.toISOString().slice(0,7);
+    const available=state.availableMonths;
+    const monthControls=`<div class="row" style="margin-bottom:14px;flex-wrap:wrap;gap:10px"><button class="btn ghost compact" onclick="TamaharUI.childMonth('${prev}')">← Previous</button><label class="field-inline">Month <input type="month" value="${esc(month)}" onchange="TamaharUI.childMonth(this.value)"></label><button class="btn ghost compact" onclick="TamaharUI.childMonth('${next}')">Next →</button><button class="btn ghost compact" onclick="TamaharUI.childMonth(todayInProgrammeZoneForUI())">Current month</button></div><p class="muted">Selected student: ${esc(c.name)} · ${esc(c.sourceId)}. Source months available: ${esc(available[0]||'none')} to ${esc(available.at(-1)||'none')}. You can also inspect a month without records.</p>`;
     const dates = monthDates(state.month);
     const first = new Date(`${state.month}-01T12:00:00`).getDay();
     const a = attendanceStats(c);
-    return `<div class="grid"><section class="card card-pad"><h2 class="section-title">${esc(state.month)} attendance</h2><p class="muted">P and PwC count as present; A counts as absent; H and NS are excluded from the monthly total. Daily source codes remain visible unchanged.</p><div class="month-grid">${Array.from({length:first},()=>'<span></span>').join('')}${dates.map((date,i)=>{const raw=c.attendanceRaw?.[date]||c.attendance?.[date]||'';return `<div class="day ${raw?'':'off'}"><strong>${i+1}</strong><small>${raw?pill(raw,raw==='A'?'warn':raw==='P'?'':'grey'):'—'}</small></div>`}).join('')}</div><p><strong>${a.percent==null?'Monthly percentage unavailable':a.percent+'%'}</strong> · ${a.present} present (including ${a.pwc} PwC) · ${a.absent} absent · effective total ${a.total}</p></section><section class="card card-pad"><h2 class="section-title">Absence reasons</h2><div class="list">${dates.filter(d=>c.attendance?.[d]==='A').map(d=>`<div class="item"><strong>${esc(d)}</strong><small>${esc(c.absences?.[d]?.reason || 'No source reason recorded')}</small></div>`).join('') || '<p class="muted">No P/A-coded absences for this month.</p>'}</div></section></div>`;
+    return monthControls + `<div class="grid"><section class="card card-pad"><h2 class="section-title">${esc(state.month)} attendance</h2><p class="muted">P and PwC count as present; A counts as absent; H and NS are excluded from the monthly total. Daily source codes remain visible unchanged.</p><div class="month-grid">${Array.from({length:first},()=>'<span></span>').join('')}${dates.map((date,i)=>{const raw=c.attendanceRaw?.[date]||c.attendance?.[date]||'';return `<div class="day ${raw?'':'off'}"><strong>${i+1}</strong><small>${raw?pill(raw,raw==='A'?'warn':raw==='P'?'':'grey'):'—'}</small></div>`}).join('')}</div><p><strong>${a.percent==null?'Monthly percentage unavailable':a.percent+'%'}</strong> · ${a.present} present (including ${a.pwc} PwC) · ${a.absent} absent · effective total ${a.total}</p></section><section class="card card-pad"><h2 class="section-title">Absence reasons</h2><div class="list">${dates.filter(d=>c.attendance?.[d]==='A').map(d=>`<div class="item"><strong>${esc(d)}</strong><small>${esc(c.absences?.[d]?.reason || 'No source reason recorded')}</small></div>`).join('') || '<p class="muted">No P/A-coded absences for this month.</p>'}</div></section></div>`;
   }
   function childAssessments(c) {
     const adl = c.backendAdl || [];
@@ -303,7 +366,7 @@
 
   function render() {
     renderNav();
-    const pages = {today:dashboard, mark:dailyAttendance, children:childrenPage, programmes:programmeReview, progress:progressPage, child:childPage};
+    const pages = {today:dashboard, mark:dailyAttendance, children:childrenPage, programmes:programmeReview, progress:progressPage, 'student-dashboard':studentProgressDashboard, child:childPage};
     $('view').innerHTML = backendBanner() + pages[state.page]();
   }
 
@@ -322,7 +385,14 @@
     }
   }
 
+  window.todayInProgrammeZoneForUI = () => todayInProgrammeZone().slice(0,7);
   window.TamaharUI = {
+    openProgressChild(childPk) { selectedProgressDetail(childPk); },
+    setProgressYear(value) { state.progressYear=value;render(); },
+    setProgressStudent(value) { state.progressStudent=value;render(); },
+    setProgressSort(value) { state.progressSort=value;render(); },
+    resetProgressFilters() {state.progressYear='all';state.progressStudent='all';state.programmeFilter='all';state.search='';state.progressSort='name';render();},
+    childMonth(value) {if(/^\\d{4}-\\d{2}$/.test(value))loadMonth(value);},
     go(page) { if(page==='mark' && state.page!=='mark' && !storedDate()) {state.entryDate=todayInProgrammeZone();state.month=state.entryDate.slice(0,7);loadMonth(state.month);} state.page = page; render(); window.scrollTo({top:0,behavior:'smooth'}); },
     openChild(id) { state.selectedId = Number(id); state.childTab='overview'; state.page='child'; render(); window.scrollTo({top:0,behavior:'smooth'}); },
     setChildTab(tab) { state.childTab = tab; render(); },
