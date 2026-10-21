@@ -396,7 +396,7 @@
       if (!canWriteProgramme() || state.bulkSaving) return;
       const date = state.entryDate?.startsWith(state.month) ? state.entryDate : state.month + '-01';
       const selected = [...document.querySelectorAll('#view form.inline-edit')].filter(form => form.elements.bulkSelected?.checked);
-      if (!selected.length) { state.writeMessage = 'Select one or more children first.'; render(); return; }
+      if (!selected.length) { state.writeMessage = 'Select one or more children first.'; document.querySelector('[data-batch-save]')?.insertAdjacentHTML('afterend','<span role="alert">'+esc(state.writeMessage)+'</span>'); return; }
       const entries = [];
       for (const form of selected) {
         const c = childById(Number(form.dataset.childId));
@@ -408,7 +408,10 @@
         const existing = c.operationalEntries?.[date + '|' + sourceLabel] || null;
         if (!code || ((meta.baselineExists || existing) && !correctionReason)) {
           state.writeMessage = 'Check the attendance code and required correction reason for ' + c.name + '.';
-          render(); return;
+          const old = document.querySelector('[data-batch-error]');
+          if (old) old.textContent=state.writeMessage;
+          else document.querySelector('[data-batch-save]')?.insertAdjacentHTML('afterend','<span data-batch-error role="alert">'+esc(state.writeMessage)+'</span>');
+          return;
         }
         entries.push({c, code, correctionReason, sourceLabel, meta, existing, reason:form.elements.reason?.value.trim() || ''});
       }
@@ -449,8 +452,24 @@
         else failures.push(item.c.name+': could not verify saved code; refresh and check before retrying');
       }
       state.batchFailures=entries.filter(item=>failures.some(error=>error.startsWith(item.c.name+':')));
+      state.batchFailures.forEach(item=>{
+        const form=document.querySelector('#view form.inline-edit[data-child-id="'+item.c.id+'"]');
+        if(!form)return;
+        form.elements.bulkSelected.checked=true;
+        form.elements.attendanceCode.value=item.code;
+        form.elements.reason.value=item.reason;
+        form.elements.correctionReason.value=item.correctionReason;
+      });
       state.writeMessage='Verified '+verified+' of '+entries.length+' selected entries.'+(failures.length?' Issues: '+failures.join('; '):'');
       render();
+      state.batchFailures.forEach(item=>{
+        const form=document.querySelector('#view form.inline-edit[data-child-id="'+item.c.id+'"]');
+        if(!form)return;
+        form.elements.bulkSelected.checked=true;
+        form.elements.attendanceCode.value=item.code;
+        form.elements.reason.value=item.reason;
+        form.elements.correctionReason.value=item.correctionReason;
+      });
     },
     async saveProgrammeAttendance(event, childId, date) {
       event?.preventDefault?.();
