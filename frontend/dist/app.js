@@ -452,6 +452,7 @@
         else failures.push(item.c.name+': persisted record not verified; review before retrying');
       }
       state.bulkSaving=false;
+      if(saveButton){saveButton.disabled=false;saveButton.textContent='Save selected attendance';}
       state.writeMessage=refreshed?
         'Verified '+verified+' of '+selected.length+' selected entries.' :
         'Database acknowledged '+accepted+' of '+selected.length+' entries, but refresh failed. Check saved records before retrying.';
