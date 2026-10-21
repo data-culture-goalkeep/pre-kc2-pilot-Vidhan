@@ -10,6 +10,24 @@
   const PROGRAMME_COLORS = ['#245b36','#96b940','#dfb920','#527a96'];
   const THERAPIES = ['Occupational therapy','Visual therapy','Speech therapy','Physical therapy'];
   const cfg = window.TAMAHAR_CONFIG || {};
+  const attendanceDateKey = 'tamahar.attendance.selectedDate.v2';
+  const attendanceZone = 'Asia/Kolkata';
+  function todayInProgrammeZone(now = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-CA',{timeZone:attendanceZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);
+    const part = type => parts.find(x=>x.type===type)?.value;
+    return [part('year'),part('month'),part('day')].join('-');
+  }
+  function validDate(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false;
+    const d = new Date(value + 'T12:00:00Z');
+    return !Number.isNaN(d.valueOf()) && d.toISOString().slice(0,10) === value;
+  }
+  function storedDate() {
+    try { const v=window.sessionStorage.getItem(attendanceDateKey);return validDate(v)?v:null; } catch {return null;}
+  }
+  function rememberDate(value) {
+    try { if(validDate(value)) window.sessionStorage.setItem(attendanceDateKey,value);else window.sessionStorage.removeItem(attendanceDateKey); } catch {}
+  }
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 
@@ -26,6 +44,7 @@
     availableMonths: [],
     saveKeys: new Set(),
     bulkSaving: false,
+    batchFailures: [],
     writeMessage: ''
   };
 
@@ -195,7 +214,7 @@
         : '';
       return `<tr><td><button class="text-link" onclick="TamaharUI.openChild(${c.id})">${esc(c.name)}</button></td><td>${esc(programmeName(c.programme))}</td><td>${programmeEditor}</td><td>${therapyDisplay}<div class="cell-actions">${therapyEditor}</div></td><td>${esc(c.absences?.[date]?.reason || '—')}</td></tr>`;
     }).join('');
-    return header('Daily entry','Attendance and therapy', writeMode() ? 'Record authorized operational attendance without changing imported Phase 1 source rows.' : 'Read-only migrated daily source codes for the selected date.') + filters() + writeNotice() + `<section class="card card-pad"><div class="row"><label class="field-inline">Class day <input type="date" min="${state.month}-01" max="${monthDates(state.month).at(-1)}" value="${date}" onchange="TamaharUI.setEntryDate(this.value)"></label><span class="muted">Operational corrections overlay the immutable Phase 1 baseline after reload.</span></div>${canWriteProgramme()?`<div class="row" style="margin:12px 0;gap:12px;flex-wrap:wrap"><button class="btn" type="button" onclick="TamaharUI.saveSelectedAttendance()">Save selected attendance</button><button class="btn ghost compact" type="button" onclick="TamaharUI.selectAllAttendance(true)">Select all</button><button class="btn ghost compact" type="button" onclick="TamaharUI.selectAllAttendance(false)">Clear</button><span class="muted">Check the children to save together. Unselected records stay unchanged.</span></div>`:""}<div class="table-wrap"><table><thead><tr><th>Child</th><th>Programme</th><th>Class code / entry</th><th>Therapy on this date</th><th>Absence reason</th></tr></thead><tbody>${body || '<tr><td colspan="5">No records.</td></tr>'}</tbody></table></div></section>`;
+    return header('Daily entry','Attendance and therapy', writeMode() ? 'Record authorized operational attendance without changing imported Phase 1 source rows.' : 'Read-only migrated daily source codes for the selected date.') + filters() + writeNotice() + `<section class="card card-pad"><div class="row"><label class="field-inline">Class day <input type="date" min="${state.month}-01" max="${monthDates(state.month).at(-1)}" value="${date}" onchange="TamaharUI.setEntryDate(this.value)"></label><button class="btn ghost compact" type="button" onclick="TamaharUI.todayAttendance()">Today</button><span class="muted">Operational corrections overlay the immutable Phase 1 baseline after reload.</span></div>${canWriteProgramme()?`<div class="row" style="margin:12px 0;gap:12px;flex-wrap:wrap"><button class="btn" type="button" data-batch-save onclick="TamaharUI.saveSelectedAttendance(event)" ${state.bulkSaving?'disabled':''}>${state.bulkSaving?'Saving selected…':'Save selected attendance' }</button><button class="btn ghost compact" type="button" onclick="TamaharUI.selectAllAttendance(true)">Select all</button><button class="btn ghost compact" type="button" onclick="TamaharUI.selectAllAttendance(false)">Clear</button><span class="muted">Check the children to save together. Unselected records stay unchanged.</span></div>`:""}<div class="table-wrap"><table><thead><tr><th>Child</th><th>Programme</th><th>Class code / entry</th><th>Therapy on this date</th><th>Absence reason</th></tr></thead><tbody>${body || '<tr><td colspan="5">No records.</td></tr>'}</tbody></table></div></section>`;
   }
 
   function studentVisuals(rows) {
@@ -304,7 +323,7 @@
   }
 
   window.TamaharUI = {
-    go(page) { state.page = page; render(); window.scrollTo({top:0,behavior:'smooth'}); },
+    go(page) { if(page==='mark' && state.page!=='mark' && !storedDate()) {state.entryDate=todayInProgrammeZone();state.month=state.entryDate.slice(0,7);loadMonth(state.month);} state.page = page; render(); window.scrollTo({top:0,behavior:'smooth'}); },
     openChild(id) { state.selectedId = Number(id); state.childTab='overview'; state.page='child'; render(); window.scrollTo({top:0,behavior:'smooth'}); },
     setChildTab(tab) { state.childTab = tab; render(); },
     setProgramme(value) { state.programmeFilter = value; render(); },
@@ -366,12 +385,14 @@
       state.children = [];
       state.availableMonths = [];
       state.selectedId = null;
+      rememberDate(null);
       await bootstrap();
     },
     selectAllAttendance(checked) {
       document.querySelectorAll('#view form.inline-edit input[name="bulkSelected"]').forEach(box => box.checked = checked);
     },
-    async saveSelectedAttendance() {
+    async saveSelectedAttendance(event) {
+      event?.preventDefault?.();
       if (!canWriteProgramme() || state.bulkSaving) return;
       const date = state.entryDate?.startsWith(state.month) ? state.entryDate : state.month + '-01';
       const selected = [...document.querySelectorAll('#view form.inline-edit')].filter(form => form.elements.bulkSelected?.checked);
@@ -393,6 +414,9 @@
       }
       if (!entries.length) { state.writeMessage='No authorized entries selected.'; render(); return; }
       state.bulkSaving = true;
+      state.writeMessage = 'Saving ' + entries.length + ' selected records…';
+      const button = document.querySelector('[data-batch-save]');
+      if(button)button.disabled = true;
       let saved = 0;
       const failures = [];
       for (const item of entries) {
@@ -412,8 +436,21 @@
         finally { state.saveKeys.delete(key); }
       }
       state.bulkSaving = false;
-      state.writeMessage = 'Saved ' + saved + ' of ' + entries.length + ' entries.' + (failures.length ? ' Failed: ' + failures.join('; ') : '');
-      if (saved) await loadMonth(state.month); else render();
+      try {
+        await loadMonth(state.month);
+      } catch(error) { failures.push('Reload failed: '+(error?.message || 'unknown error')); }
+      let verified=0;
+      const failedIds=new Set(failures.map(message=>message.split(':')[0]));
+      for (const item of entries) {
+        if (failedIds.has(item.c.name)) continue;
+        const live=state.children.find(c=>c.childPk===item.c.childPk);
+        const persisted=live?.operationalEntries?.[date+'|'+item.sourceLabel];
+        if(persisted?.attendance_code===item.code)verified++;
+        else failures.push(item.c.name+': could not verify saved code; refresh and check before retrying');
+      }
+      state.batchFailures=entries.filter(item=>failures.some(error=>error.startsWith(item.c.name+':')));
+      state.writeMessage='Verified '+verified+' of '+entries.length+' selected entries.'+(failures.length?' Issues: '+failures.join('; '):'');
+      render();
     },
     async saveProgrammeAttendance(event, childId, date) {
       event?.preventDefault?.();
@@ -506,7 +543,8 @@
         state.saveKeys.delete(key);
       }
     },
-    setEntryDate(value) { state.entryDate = value; render(); },
+    setEntryDate(value) { if(!validDate(value))return;state.entryDate=value;rememberDate(value);if(value.slice(0,7)!==state.month)loadMonth(value.slice(0,7));else render(); },
+    todayAttendance() { const date=todayInProgrammeZone();state.entryDate=date;rememberDate(date);if(date.slice(0,7)!==state.month)loadMonth(date.slice(0,7));else render(); },
     setMonth(value) { if (value) loadMonth(value); }
   };
 
@@ -532,7 +570,9 @@
       state.children = data.children;
       state.availableMonths = data.availableMonths || [];
       state.month = data.selectedMonth || state.month;
-      state.entryDate = `${state.month}-01`;
+      state.entryDate = storedDate() || todayInProgrammeZone();
+      state.month = state.entryDate.slice(0,7);
+      if (data.selectedMonth !== state.month) await window.TamaharBackend.loadMonth(state.children,state.month);
       state.holidays = data.holidays || {};
       state.selectedId = state.children[0]?.id || null;
       setStatus(`Connected · ${state.children.length} Phase 1 child records · ${writeMode()?'controlled attendance writes enabled':'read-only'}`);
